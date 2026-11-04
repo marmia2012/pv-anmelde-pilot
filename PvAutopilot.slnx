@@ -1,0 +1,21 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PvAutopilot.Core/PvAutopilot.Core.csproj" />
+    <Project Path="src/PvAutopilot.Host/PvAutopilot.Host.csproj" />
+    <Project Path="src/PvAutopilot.Infrastructure/PvAutopilot.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/src/Netzbetreiber/">
+    <Project Path="src/Netzbetreiber/PvAutopilot.Netzbetreiber.NetzeDuisburg/PvAutopilot.Netzbetreiber.NetzeDuisburg.csproj" />
+  </Folder>
+  <Folder Name="/src/Registries/">
+    <Project Path="src/Registries/PvAutopilot.Registries.Mastr/PvAutopilot.Registries.Mastr.csproj" />
+  </Folder>
+  <Folder Name="/src/Sources/">
+    <Project Path="src/Sources/PvAutopilot.Sources.HubSpot/PvAutopilot.Sources.HubSpot.csproj" />
+    <Project Path="src/Sources/PvAutopilot.Sources.Reonic/PvAutopilot.Sources.Reonic.csproj" />
+    <Project Path="src/Sources/PvAutopilot.Sources.SharePoint/PvAutopilot.Sources.SharePoint.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PvAutopilot.Tests/PvAutopilot.Tests.csproj" />
+  </Folder>
+</Solution>

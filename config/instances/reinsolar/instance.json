@@ -1,0 +1,51 @@
+{
+  "_comment": "Instanz reinsolar: kundenspezifische, NICHT geheime Konfiguration. Secrets nur über Umgebungsvariablen (siehe .env.example). Leere Werte vor dem ersten Lauf füllen.",
+
+  "Instance": {
+    "Name": "reinsolar"
+  },
+
+  "HubSpot": {
+    "_comment": "Objekttyp der Projekte, Trigger-Stage und Property-Namen aus dem HubSpot-Portal von reinsolar.",
+    "ProjectObjectTypeId": "",
+    "TriggerPropertyName": "hs_pipeline_stage",
+    "TriggerPropertyValues": [],
+    "ReviewApprovalPropertyName": "",
+    "ReviewApprovalPropertyValue": "true",
+    "Properties": {
+      "ReonicProjectId": "",
+      "Einspeiseart": "",
+      "NhSicherungAmpere": "",
+      "BestandsanlageVorhanden": "",
+      "TerminElektroinstallation": "",
+      "TerminDachmontage": "",
+      "ErrichterFirma": "",
+      "ErrichterOrt": "",
+      "ErrichterEintragungsnummer": "",
+      "ErrichterNetzbetreiber": "",
+      "EvuVollmacht": "",
+      "MastrBenutzername": "",
+      "MastrPasswort": "",
+      "Status": "",
+      "Fehlertext": ""
+    }
+  },
+
+  "Reonic": {
+    "ChecklistStage": "offer"
+  },
+
+  "SharePoint": {
+    "SiteId": "",
+    "DriveId": "",
+    "ProductRootPath": ""
+  },
+
+  "Netzbetreiber": {
+    "NetzeDuisburg": {
+      "_comment": "Antragsweg ist mit Netze Duisburg noch zu klären (Mail oder Portal).",
+      "Channel": "Mail",
+      "MailRecipient": ""
+    }
+  }
+}
