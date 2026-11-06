@@ -16,20 +16,24 @@
 - HubSpot-Webhook (Signatur v3) und konfigurierbare Trigger-Regeln
 - Reonic-Adapter: Hauptvariante, Katalog, Zählernummer, Checkliste, Backoff 2/4/8/16 s
 - Netzbetreiber-Ermittlung per PLZ-Tabelle
-- Netze-Duisburg-Adapter: Gerüst mit Validierung Netzanmeldung, Versandkanal Mail/Portal austauschbar
+- Netze-Duisburg-Adapter: Formulare E.1, E.2, E.3 (mit Speicher), E.8 und Zählerantrag (je Zähler) werden aus der Datenkarte gefüllt (PDFsharp 6.1.1, Felder editierbar), Antragspaket je Einreichungsart inkl. Anhängen, Prüfung Netzanmeldung + Inbetriebnahme, Pflichtanhänge konfigurierbar (`RequiredAttachments`). Mapping: `docs/konzept/netze-duisburg-adapter.md`. Versandkanal Mail/Portal austauschbar (noch Platzhalter)
 
 ### Noch nicht umgesetzt (Platzhalter im Code)
 | Baustein | Hängt an |
 |---|---|
 | HubSpot lesen (Projekt, Deal, Kontakt) | HubSpot-Struktur (Michael), Private-App-Token |
 | HubSpot schreiben (Tasks, Notizen, Dateien, Status) | Freigabe der Schreibrechte |
-| PDF-Formulare E.1–E.8 + Zählerantrag (PDFsharp) | Unterschrift als Bild, E.8 Symmetrie |
+| Formularwerte aus Datenblättern (Scheinleistung, Bemessungsstrom, nutzbare Kapazität, Verschiebungsfaktor, U>, Speicher-Phasen/Inselnetz) | Produktstamm bzw. KI-Auslesen der Datenblätter |
+| Unterschrift in E.1, E.3, E.8, Zählerantrag | Unterschrift als Bild (Michael) |
+| Errichter Straße/Telefon/E-Mail in E.3 und E.8 | Errichter-Konfiguration (HubSpot-Branch) |
+| E.8 ab Abschnitt „Symmetrie“ (Symmetrie, Blindleistungsverfahren, TF-Sperren, PAV,E) | Klärung Martin, Vorgaben aus der Einspeisezusage |
+| Lageplan-Adapter (alle Netzbetreiber), Herstellerdokumente E.6/E.7 als Anhang | TIM-online/WMS ALKIS, SharePoint |
 | Versand Netze Duisburg (Graph-Mail bzw. Portal-Klickstrecke) | Entscheidung Portal oder Mail |
 | MaStR-Klickstrecke (Playwright) | Herkunft des MaStR-Logins |
 | SharePoint-Datenblätter | Ordnerstruktur bzw. Entscheidung Reonic-Katalog |
 | Alarm-Mail an Martin (Graph) | Graph-Zugang |
 | Datenkarte zusätzlich in HubSpot ablegen | Schreibrechte |
-| Prüfungen E.8 im Duisburg-Adapter | E.8 Symmetrie |
+| Portal-Upload der Unterlagen Netze Duisburg | Entscheidung Portal oder Mail |
 
 ## In Arbeit (Martin, bis 09.11. bzw. 15.11.)
 - [ ] **Netze Duisburg + MaStR bauen, Dry-Run auf Staging (bis 15.11.)**
@@ -50,6 +54,7 @@
 - [ ] Schreibrechte in HubSpot freigeben
 - [ ] Martin als Member im OpenAI-Plattformzugang
 - [ ] Unterschrift als Bild
+- [ ] Annahmen Duisburg-Formulare bestätigen: MK 3 für „Kaskade“, „Drehstrom“ bei dreiphasigem WR (E.2), Kaskaden-Umbau als Zählerwechsel, „Eine Anlage kann in Betrieb gehen“ auch im Ausbau-Antrag, Anhänge zur Inbetriebnahme (`docs/konzept/netze-duisburg-adapter.md`, Abschnitt „Offen“)
 - [ ] Portal-Zugangsdaten in der Teams-Excel
 - [ ] HubSpot-Vertrag/Lizenz
 

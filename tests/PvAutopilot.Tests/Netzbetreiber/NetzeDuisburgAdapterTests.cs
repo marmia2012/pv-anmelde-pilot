@@ -1,6 +1,9 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using PvAutopilot.Netzbetreiber.NetzeDuisburg;
 using PvAutopilot.Netzbetreiber.NetzeDuisburg.Channels;
+using PvAutopilot.Netzbetreiber.NetzeDuisburg.Forms;
+using PvAutopilot.Core.DataCard;
 using PvAutopilot.Core.Submission;
 
 namespace PvAutopilot.Tests.Netzbetreiber;
@@ -8,12 +11,18 @@ namespace PvAutopilot.Tests.Netzbetreiber;
 public class NetzeDuisburgAdapterTests
 {
     private static NetzeDuisburgAdapter Adapter(NetzeDuisburgChannelKind channel = NetzeDuisburgChannelKind.Mail) =>
-        new(Options.Create(new NetzeDuisburgOptions { Channel = channel }), new NetzeDuisburgMailChannel(), new NetzeDuisburgPortalChannel());
+        new(
+            Options.Create(new NetzeDuisburgOptions { Channel = channel }), new NetzeDuisburgMailChannel(), new NetzeDuisburgPortalChannel(),
+            new NetzeDuisburgFormGenerator(NullLogger<NetzeDuisburgFormGenerator>.Instance), TimeProvider.System,
+            NullLogger<NetzeDuisburgAdapter>.Instance);
 
     [Fact]
     public void Small_complete_plant_is_valid()
     {
-        Assert.Empty(Adapter().Validate(SubmissionKind.Netzanmeldung, TestData.Card(modulAnzahl: 20)));
+        var card = TestData.Card(modulAnzahl: 20);
+        card = card with { Dokumente = [.. card.Dokumente, new DocumentRef(DocumentKind.Schaltplan, "test", "2", "schaltplan.pdf")] };
+
+        Assert.Empty(Adapter().Validate(SubmissionKind.Netzanmeldung, card));
     }
 
     [Fact]

@@ -112,6 +112,11 @@ Je Netzbetreiber-Adapter ein Unterabschnitt.
 | `Netzbetreiber:NetzeDuisburg:Channel` | INST | `Mail` | Antragsweg: `Mail` oder `Portal`. Unterlagen sind identisch, nur der Versandkanal wechselt. Noch mit Netze Duisburg zu klären |
 | `Netzbetreiber:NetzeDuisburg:MailRecipient` | INST | leer | Empfängeradresse beim Kanal `Mail` |
 | `Netzbetreiber__NetzeDuisburg__PortalUrl` | APP | Login-URL des SAP-Portals | Einstieg beim Kanal `Portal` |
+| `Netzbetreiber:NetzeDuisburg:RequiredAttachments` | INST | `EvuVollmacht`, `Schaltplan` | Pflichtanhänge der Netzanmeldung (Werte von `DocumentKind`, z. B. `Lageplan`, `Datenblatt`, `Einheitenzertifikat`, `NaSchutzZertifikat`, `NaSchutzPruefbericht`). Fehlt einer in der Datenkarte → fachliche Prüfung schlägt fehl (HubSpot-Task). Alle übrigen Anhänge der Netzanmeldung sind optional: fehlen sie, nur Warnung im Log (`Optionaler Anhang fehlt`). Eine gesetzte Liste **ersetzt** den Default komplett, z. B. `"RequiredAttachments": ["EvuVollmacht", "Schaltplan", "Lageplan"]` bzw. ENV `Netzbetreiber__NetzeDuisburg__RequiredAttachments__0=EvuVollmacht` |
+
+Die Formularvorlagen (E.1, E.2, E.3, E.8, Zählerantrag) sind im Duisburg-Adapter eingebettet und nicht konfigurierbar; Feld-Mapping in [konzept/netze-duisburg-adapter.md](konzept/netze-duisburg-adapter.md).
+
+**PDFsharp-Version:** bewusst **6.1.1** (MIT), Entscheidung Martin 06.11.2026. 6.5.0 wirft beim Öffnen „The loaded license is not valid“. Vor einem Update das Lizenzmodell ab 6.5 klären. Eine Lizenz-Einstellung gibt es nicht.
 
 ### MaStR (`Mastr`)
 
