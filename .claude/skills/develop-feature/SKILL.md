@@ -16,6 +16,27 @@ Kommunikation mit Martin auf Deutsch. Code und Identifier auf Englisch, Fachbegr
 - **Memory beachten**, insbesondere Einschränkungen für echte Systeme (z. B. Reonic/HubSpot nur lesend). Diese Einschränkungen jedem Subagent im Prompt mitgeben.
 - **Subagents** bekommen einen vollständigen, eigenständigen Auftrag: Plan (Pfad), betroffene Dateien, relevante Konzepte, harte Regeln, Memory-Einschränkungen, erwartetes Ergebnis. Ihr Ergebnis wird geprüft, nicht blind übernommen.
 
+## Modelle und Tokens
+
+Jeder Subagent bekommt beim Start das passende Modell (`model` im Agent-Aufruf). Teure Modelle nur, wo Urteilsvermögen zählt.
+
+| Teilaufgabe | Modell | Warum |
+|---|---|---|
+| Klären, Plan, Mutationsliste, Abnahme der Ergebnisse | Hauptsitzung | braucht den ganzen Gesprächskontext |
+| Code finden / Struktur erkunden | `Explore` mit `haiku` | reines Suchen und Zusammenfassen |
+| Entwicklung | `sonnet` | gut spezifizierter Plan, bestehende Muster als Vorlage |
+| Entwicklung heikler Schritte | `opus` | nur wenn der Plan den Schritt als heikel markiert: Zustandsmaschine, Idempotenz/Doppelversand, Nebenläufigkeit, Sicherheit, Migrationen mit Bestandsdaten |
+| Tests schreiben, hohle Tests korrigieren | `sonnet` | Verhalten verstehen, Fakes nutzen |
+| Testlauf | `haiku` | `dotnet test` ausführen und Fehler berichten |
+| Mutationen einbauen, zurücknehmen, prüfen | `haiku` | arbeitet eine fertige Mutationsliste ab |
+| Code-Review | `opus` | hier fallen die subtilen Fehler auf |
+
+Sparregeln:
+- **Agents wiederverwenden:** Nacharbeiten (Fehler aus dem Testlauf, Review-Befunde) per `SendMessage` an denselben Entwicklungs- bzw. Test-Agent, statt einen neuen zu starten. Er kennt den Code schon.
+- **Kontext eng halten:** im Auftrag die konkreten Dateien und Vorlagen nennen, statt „lies das Projekt“. Nur die Konzeptdokumente, die den Schritt betreffen.
+- **Ausgaben kurz halten:** Testlauf mit `dotnet test --no-build` nach einem Build und nur fehlgeschlagene Tests berichten lassen (`--logger "console;verbosity=minimal"`); Berichte ohne Dateiinhalte und ohne vollständige Diffs.
+- Ist ein Schritt sehr klein (ein, zwei Dateien), erledigt ihn die Hauptsitzung selbst, ohne Subagent.
+
 ## Phase 0 – Einstieg
 
 1. Arbeitsverzeichnis prüfen (`git status`). Gibt es uncommittete Änderungen, Martin fragen, ob sie vorher committet, gestasht oder ins Feature übernommen werden. Nichts verwerfen.
@@ -51,7 +72,7 @@ Kommunikation mit Martin auf Deutsch. Code und Identifier auf Englisch, Fachbegr
 
 ## Phase 4 – Entwicklung (Subagent „Entwicklung“)
 
-Auftrag an einen `general-purpose`-Subagent, je Planschritt oder für zusammenhängende Schritte:
+Auftrag an einen `general-purpose`-Subagent (`sonnet`, heikle Schritte `opus`, siehe „Modelle und Tokens“), je Planschritt oder für zusammenhängende Schritte. Im Plan heikle Schritte mit „(heikel)“ markieren:
 
 - Sich an bestehende Strukturen halten: vorhandene Projekte, Namespaces, Muster (Adapter hinter Interfaces in Core, Optionen-Klassen mit `SectionName`, `IValidateOptions`/`ValidateOnStart`, DI-Erweiterung `Add<Name>()`, Fehlerklassen fachlich vs. technisch). Vergleichbaren vorhandenen Code als Vorlage nennen (z. B. Reonic-Adapter für neue Datenquellen).
 - **Log-Messages einbauen** mit Serilog-/`ILogger`-Templates (strukturierte Platzhalter, keine String-Interpolation): Start/Ende wichtiger Operationen auf `Information`, Details auf `Debug`, übersprungene oder unvollständige Fälle auf `Warning`, Fehler auf `Error`. Nur IDs, Zustände, Feld- und Produktnamen loggen, **nie** Namen, Adressen, IBAN, E-Mail, Telefon, Zählernummern, Freitexte, Tokens oder Antwort-Bodies. Personenbezogene Properties mit `[PersonalData]` markieren.
@@ -63,7 +84,7 @@ Danach selbst prüfen: `dotnet build` ohne neue Warnungen, Diff gegen den Plan a
 
 ## Phase 5 – Tests schreiben (Subagent „Tests“)
 
-Eigener `general-purpose`-Subagent, nicht derselbe wie die Entwicklung:
+Eigener `general-purpose`-Subagent (`sonnet`), nicht derselbe wie die Entwicklung:
 
 - Tests in `tests/PvAutopilot.Tests/` passend zur bestehenden Struktur (Ordner je Bereich, vorhandene Fakes/Fixtures wiederverwenden, z. B. `CoreFakes.cs`, Reonic-Fixtures).
 - Verhalten testen, nicht Implementierung: je Planschritt die fachlichen Regeln, Defaults, Fehlerfälle, Idempotenz und dass keine personenbezogenen Daten geloggt werden, wo relevant.
@@ -71,7 +92,7 @@ Eigener `general-purpose`-Subagent, nicht derselbe wie die Entwicklung:
 
 ## Phase 6 – Tests ausführen (Subagent „Testlauf“)
 
-Eigener Subagent führt `dotnet test` aus und berichtet: Anzahl grün/rot, je Fehler Test, Meldung und vermutete Ursache (Code oder Test). Fehler beheben (Entwicklungs- bzw. Test-Subagent) und erneut laufen lassen, bis alles grün ist.
+Eigener Subagent (`haiku`) führt `dotnet build` und danach `dotnet test --no-build` aus und berichtet knapp: Anzahl grün/rot, je Fehler Test, Meldung und vermutete Ursache (Code oder Test). Fehler beheben (Entwicklungs- bzw. Test-Subagent) und erneut laufen lassen, bis alles grün ist.
 
 Sobald alles grün ist: **Commit** mit beschreibender Message (was das Feature kann, welche Planschritte, Testanzahl).
 
@@ -79,8 +100,8 @@ Sobald alles grün ist: **Commit** mit beschreibender Message (was das Feature k
 
 Ziel: Jeder neue Test schlägt fehl, wenn das Verhalten, das er absichert, kaputt ist.
 
-1. Für jedes abgesicherte Verhalten eine gezielte Mutation im **Produktivcode** (`src/`) einbauen, z. B. Bedingung umdrehen, Default ändern, Fallback entfernen, Aufruf weglassen, Idempotenzprüfung entfernen, Log-Maskierung entfernen. Liste führen: Mutation → Test, der fehlschlagen muss.
-2. Tests ausführen (Subagent „Testlauf“). Für jede Mutation prüfen, ob der erwartete Test fehlschlägt.
+1. Die Hauptsitzung erstellt die **Mutationsliste**: für jedes abgesicherte Verhalten eine gezielte Mutation im **Produktivcode** (`src/`) mit Datei, Stelle und genauer Änderung, z. B. Bedingung umdrehen, Default ändern, Fallback entfernen, Aufruf weglassen, Idempotenzprüfung entfernen, Log-Maskierung entfernen. Dazu je Mutation der Test, der fehlschlagen muss.
+2. Ein Subagent (`haiku`) arbeitet die Liste ab: Mutationen einzeln oder in unabhängigen Gruppen einbauen, Tests ausführen, je Mutation festhalten, ob der erwartete Test fehlschlägt, und die Mutation wieder zurücknehmen.
 3. Bleibt ein Test grün, ist er hohl: den **Test** korrigieren (Subagent „Tests“), nie die Mutation abschwächen. Wiederholen, bis jede Mutation erkannt wird.
 4. Alle Mutationen zurücknehmen: nur die Dateien unter `src/` auf den Stand des letzten Commits setzen (`git restore --source=HEAD -- <dateien>`), Test-Änderungen behalten. Mit `git diff --stat` prüfen, dass nur noch Dateien unter `tests/` geändert sind.
 5. Tests ausführen: Alles muss wieder grün sein.
@@ -88,7 +109,7 @@ Ziel: Jeder neue Test schlägt fehl, wenn das Verhalten, das er absichert, kaput
 
 ## Phase 8 – Code-Review (Subagent „Review“)
 
-Eigener Subagent prüft den gesamten Branch-Diff gegen `main`:
+Eigener Subagent (`opus`) prüft den gesamten Branch-Diff gegen `main`:
 
 - Einhaltung von Plan, Konzepten und Beschlüssen
 - harte Regeln (PII in Logs, Secrets, Idempotenz, Doppelversand, DryRun-Default)
@@ -96,7 +117,7 @@ Eigener Subagent prüft den gesamten Branch-Diff gegen `main`:
 - Doku: `docs/konfiguration.md`, `.env.example`, `instance.json`, Konzeptdokumente
 - Korrektheitsfehler und Randfälle
 
-Befunde nach Schwere sortiert. Berechtigte Befunde beheben, danach Phase 6 (Tests grün) und für neu getestetes Verhalten Phase 7 erneut. Abgelehnte Befunde mit Begründung im PR erwähnen. Commit `Review-Befunde behoben`.
+Befunde nach Schwere sortiert. Berechtigte Befunde beheben (per `SendMessage` an den bestehenden Entwicklungs-Agent), danach Phase 6 (Tests grün) und für neu getestetes Verhalten Phase 7 erneut. Abgelehnte Befunde mit Begründung im PR erwähnen. Commit `Review-Befunde behoben`.
 
 ## Phase 9 – Pull Request
 
