@@ -59,6 +59,17 @@ public class HubSpotDateTimeZoneTests
     }
 
     [Fact]
+    public void Epoch_midnight_utc_keeps_the_utc_day_in_a_zone_with_negative_offset_but_epoch_with_time_does_not()
+    {
+        var newYork = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
+
+        // Mitternacht UTC ist ein reines Datum: nicht der Vortag, obwohl es in New York noch der 19. ist.
+        Assert.Equal(new DateOnly(2026, 11, 20), Parse(Epoch(2026, 11, 20).ToString(), newYork));
+        // 03:00Z ist in New York (UTC-5) der Vortag.
+        Assert.Equal(new DateOnly(2026, 11, 19), Parse(Epoch(2026, 11, 20, 3, 0).ToString(), newYork));
+    }
+
+    [Fact]
     public void Utc_zone_keeps_the_utc_day()
     {
         Assert.Equal(new DateOnly(2026, 11, 20), Parse("2026-11-20T23:30:00Z", TimeZoneInfo.Utc));
