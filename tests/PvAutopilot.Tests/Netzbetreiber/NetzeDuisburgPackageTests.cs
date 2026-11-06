@@ -34,6 +34,26 @@ public class NetzeDuisburgPackageTests
     }
 
     [Fact]
+    public async Task Netzanmeldung_without_storage_has_E1_and_E2_but_no_E3()
+    {
+        var package = await Prepare(Adapter(), SubmissionKind.Netzanmeldung, Card(speicher: null));
+
+        Assert.Contains(package.Documents, d => d.FileName == "E1_Antragstellung.pdf");
+        Assert.Contains(package.Documents, d => d.FileName == "E2_Datenblatt_Erzeugungsanlage.pdf");
+        Assert.DoesNotContain(package.Documents, d => d.FileName.StartsWith("E3_"));
+        Assert.Equal(2, package.Documents.Count);
+    }
+
+    [Fact]
+    public async Task Netzanmeldung_with_storage_has_exactly_one_E3()
+    {
+        var package = await Prepare(Adapter(), SubmissionKind.Netzanmeldung, Card(speicher: Speicher));
+
+        Assert.Single(package.Documents, d => d.FileName == "E3_Datenblatt_Speicher.pdf");
+        Assert.Equal(3, package.Documents.Count);
+    }
+
+    [Fact]
     public async Task Netzanmeldung_with_storage_adds_E3()
     {
         var package = await Prepare(Adapter(), SubmissionKind.Netzanmeldung, Card(speicher: Speicher));
