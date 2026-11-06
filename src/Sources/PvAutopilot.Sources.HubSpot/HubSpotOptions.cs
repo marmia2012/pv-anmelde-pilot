@@ -28,6 +28,21 @@ public sealed class HubSpotOptions
     public string ObjectTypeId { get; set; } = "0-3";
 
     /// <summary>
+    /// Veralteter Schlüssel (vor <see cref="ObjectTypeId"/>). Wird nicht mehr ausgewertet; ist er gesetzt, warnt der Start,
+    /// damit eine alte Konfiguration nicht unbemerkt auf den Default <c>0-3</c> fällt.
+    /// </summary>
+    public string? ProjectObjectTypeId { get; set; }
+
+    /// <summary>
+    /// IANA-Zeitzone der Instanz für Datum-Uhrzeit-Werte aus HubSpot (z. B. Termine): solche Werte werden in diese Zone
+    /// umgerechnet, bevor der Kalendertag genommen wird. Reine Datumswerte (Mitternacht UTC, <c>yyyy-MM-dd</c>) bleiben, wie sie sind.
+    /// </summary>
+    public string TimeZone { get; set; } = "Europe/Berlin";
+
+    /// <summary>Die Zeitzone aus <see cref="TimeZone"/>; die Startvalidierung stellt sicher, dass sie existiert.</summary>
+    public TimeZoneInfo ResolveTimeZone() => TimeZoneInfo.FindSystemTimeZoneById(TimeZone.Trim());
+
+    /// <summary>
     /// Schreibzugriffe (Aufgaben, Notizen, Dateien, Status) aktiv. Default <c>false</c>: es wird nur geloggt.
     /// </summary>
     public bool WriteEnabled { get; set; }

@@ -147,7 +147,7 @@ public class HubSpotTriggerRuleTests
     [InlineData("2026-13-01")]
     [InlineData("-1x")]
     [InlineData("99999999999999999")]
-    public void HubSpotDate_rejects_invalid_values(string value) => Assert.False(HubSpotDate.TryParse(value, out _));
+    public void HubSpotDate_rejects_invalid_values(string value) => Assert.False(HubSpotDate.TryParse(value, TimeZoneInfo.FindSystemTimeZoneById("Europe/Berlin"), out _));
 
     [Fact]
     public void Validation_requires_a_start_rule_and_kind_specific_fields()

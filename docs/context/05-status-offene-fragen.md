@@ -33,6 +33,7 @@
 
 ## In Arbeit (Martin, bis 09.11. bzw. 15.11.)
 - [ ] **Netze Duisburg + MaStR bauen, Dry-Run auf Staging (bis 15.11.)**
+- [ ] Nach dem Merge des HubSpot-Adapters: Duisburg-Formulare (Anschlussnehmer/Anlagenbetreiber) auf `NabDataCard.Betreiberadresse` statt `Anlagenadresse` umstellen
 - [ ] Code committen, Staging auf Railway bereitstellen, Demo für den 09.11. vorbereiten (Prozessablauf über Admin-Endpunkte + Datenkarte aus Reonic)
 - [ ] HubSpot-App/Token anlegen: Staging im Entwickler-Testaccount, Produktion im reinsolar-Account (erst Lese-Scopes)
 - [ ] Reonic-API gegen ein echtes Projekt testen (Requests in `reonic-checkliste-vorschlag.md`, Abschnitt 6.3)

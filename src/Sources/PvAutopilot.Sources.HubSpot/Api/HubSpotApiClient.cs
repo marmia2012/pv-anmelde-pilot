@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using PvAutopilot.Core.Http;
 
 namespace PvAutopilot.Sources.HubSpot.Api;
 
@@ -103,7 +104,7 @@ public sealed class HubSpotApiClient(HttpClient http)
             : [];
 
         var path = $"crm/v3/objects/{Escape(objectType)}";
-        using var response = await http.PostAsJsonAsync(path, new { properties, associations }, Json, ct);
+        using var response = await CreatingPostAsync(path, JsonContent.Create(new { properties, associations }, options: Json), ct);
         EnsureSuccess(path, response);
         var created = await response.Content.ReadFromJsonAsync<HubSpotObject>(Json, ct)
             ?? throw new InvalidOperationException($"HubSpot {path}: leere Antwort.");
@@ -111,6 +112,7 @@ public sealed class HubSpotApiClient(HttpClient http)
         if (!inline)
         {
             // Lücke: bricht der Lauf hier ab, bleibt ein unverknüpftes Objekt zurück; der Retry legt ein neues an.
+            // Der PUT ist idempotent (dieselbe Verknüpfung entsteht nicht doppelt) und darf deshalb voll wiederholt werden.
             var associate = $"crm/v4/objects/{Escape(objectType)}/{Escape(created.Id)}/associations/default/{Escape(toObjectType)}/{Escape(toId)}";
             using var associated = await http.PutAsync(associate, content: null, ct);
             EnsureSuccess(associate, associated);
@@ -134,7 +136,7 @@ public sealed class HubSpotApiClient(HttpClient http)
         const string path = "files/v3/files";
         var file = new ByteArrayContent(content);
         file.Headers.ContentType = MediaTypeHeaderValue.Parse(contentType);
-        using var form = new MultipartFormDataContent
+        var form = new MultipartFormDataContent
         {
             { file, "file", fileName },
             { new StringContent(fileName), "fileName" },
@@ -146,10 +148,21 @@ public sealed class HubSpotApiClient(HttpClient http)
             },
         };
 
-        using var response = await http.PostAsync(path, form, ct);
+        using var response = await CreatingPostAsync(path, form, ct);
         EnsureSuccess(path, response);
         return await response.Content.ReadFromJsonAsync<HubSpotFile>(Json, ct)
             ?? throw new InvalidOperationException($"HubSpot {path}: leere Antwort.");
+    }
+
+    /// <summary>
+    /// <c>POST</c>, der etwas anlegt: der Backoff wiederholt nur bei 429 (dann hat HubSpot nichts angelegt). Ein 5xx geht
+    /// an den Aufrufer – HubSpot kann trotzdem angelegt haben; der Job-Retry prüft vorher das Ledger.
+    /// </summary>
+    private async Task<HttpResponseMessage> CreatingPostAsync(string path, HttpContent content, CancellationToken ct)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = content };
+        request.Options.Set(ExponentialBackoffHandler.RateLimitOnly, true);
+        return await http.SendAsync(request, ct);
     }
 
     /// <returns><c>null</c> bei 404 (fachlich: nicht vorhanden). Andere Fehler werfen und werden vom Job wiederholt.</returns>

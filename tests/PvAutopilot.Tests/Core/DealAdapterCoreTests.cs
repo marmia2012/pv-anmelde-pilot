@@ -244,15 +244,15 @@ public class AggregateDataCardStepArchiveTests
     [Fact]
     public void Each_revision_gets_its_own_file_name()
     {
-        Assert.Equal("nab-datenkarte-r0.json", AggregateDataCardStep.DataCardDocument(0, TestData.Card()).FileName);
-        Assert.Equal("nab-datenkarte-r2.json", AggregateDataCardStep.DataCardDocument(2, TestData.Card()).FileName);
+        Assert.Equal("nab-datenkarte-r0.json", AggregateDataCardStep.DataCardDocument(Guid.Empty, 0, TestData.Card()).FileName);
+        Assert.Equal("nab-datenkarte-r2.json", AggregateDataCardStep.DataCardDocument(Guid.Empty, 2, TestData.Card()).FileName);
     }
 
     [Fact]
     public void Same_card_gives_identical_bytes_so_that_the_archive_can_deduplicate()
     {
-        var a = AggregateDataCardStep.DataCardDocument(1, TestData.Card());
-        var b = AggregateDataCardStep.DataCardDocument(1, TestData.Card());
+        var a = AggregateDataCardStep.DataCardDocument(Guid.Empty, 1, TestData.Card());
+        var b = AggregateDataCardStep.DataCardDocument(Guid.Empty, 1, TestData.Card());
 
         Assert.Equal(a.Content, b.Content);
     }

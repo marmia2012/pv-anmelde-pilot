@@ -25,6 +25,13 @@ public sealed record CrmProjectData
 {
     public string? PlanningProjectId { get; init; }
     public Person? Anlagenbetreiber { get; init; }
+
+    /// <summary>
+    /// Anschrift des Anlagenbetreibers. Instanz reinsolar: immer die Kundenadresse, auch bei abweichendem Betreiber
+    /// (Entscheidung 06.11.). Kein Pflichtfeld: <c>null</c> = der Aggregator nimmt <see cref="Anlagenadresse"/>.
+    /// </summary>
+    public PostalAddress? Betreiberadresse { get; init; }
+
     public PostalAddress? Anlagenadresse { get; init; }
 
     /// <summary>Abweichender Errichter am Vorgang; <c>null</c> = Errichter der Instanz (<see cref="ErrichterOptions"/>).</summary>

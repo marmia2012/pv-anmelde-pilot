@@ -6,7 +6,7 @@ Stand: 06.11.2026 · intern. Code: `src/Sources/PvAutopilot.Sources.HubSpot/`. P
 
 - CRM-Objekt ist der **Deal** (`HubSpot:ObjectTypeId` = `0-3`). Der Objekttyp bleibt konfigurierbar, falls reinsolar später HubSpot-Projekte oder ein Custom Object nutzt.
 - Property-Namen, Stage-IDs und Optionswerte kommen ausschließlich aus `instance.json` (`HubSpot:Properties`, `TriggerRules`, `EinspeiseartValues`). Im Code stehen nur HubSpot-eigene Properties (`hubspot_owner_id`, `hs_attachment_ids`, `hs_timestamp`, `hs_note_body`, `hs_task_*`).
-- Ein typisierter Client (`Api/HubSpotApiClient`) für Lesen und Schreiben; Bearer-Token, Backoff 2/4/8/16 s bei 429/5xx und Timeout wie bei Reonic.
+- Ein typisierter Client (`Api/HubSpotApiClient`) für Lesen und Schreiben; Bearer-Token, Backoff 2/4/8/16 s und Timeout wie bei Reonic. GET, PATCH, Batch-Read und der Verknüpfungs-PUT (idempotent) werden bei 429 und 5xx wiederholt; **anlegende POSTs** (Aufgabe, Notiz, Datei-Upload) nur bei 429 (`ExponentialBackoffHandler.RateLimitOnly`) – bei 429 legt HubSpot nichts an, ein 5xx geht an den Job-Retry.
 - **Geschrieben wird nur mit `HubSpot__WriteEnabled=true`** (Default `false`, Memory „HubSpot nur lesend“). Ohne den Schalter schreibt kein Sink etwas, es entsteht nur ein Debug-Log je übersprungenem Write. Lesen ist davon unabhängig.
 
 ## Lesen
@@ -30,7 +30,7 @@ Alle Sinks in `HubSpotServices.cs`; Verknüpfung mit dem Deal über den vordefin
 | `ICrmStatusSink` → `HubSpotStatusSink` | nach jedem Zustandswechsel, am Ende jedes Laufs (falls der aktuelle Stand im Lauf noch nicht erfolgreich geschrieben wurde), beim Blockieren, nach Resume | `PATCH crm/v3/objects/{type}/{id}` | siehe „Status-Properties“ |
 | `IMastrCredentialStore.DeleteAsync` | nach der MaStR-Registrierung | – | **löscht nicht**, nur Info-Log (siehe „MaStR-Passwort“) |
 
-Die NAB-Datenkarte legt `AggregateDataCardStep` nach erfolgreicher Aggregation als `nab-datenkarte-r<Revision>.json` (JSON, Enums als Text) über `IDocumentArchive` ab. Konzept: Datenkarte in der Prozess-DB und in HubSpot.
+Die NAB-Datenkarte legt `AggregateDataCardStep` nach erfolgreicher Aggregation als `nab-datenkarte-r<Revision>.json` (JSON, Enums als Text) über `IDocumentArchive` ab, mit stabilem Ablage-Schlüssel `datacard:<prozess>:r<Revision>` (`GeneratedDocument.ArchiveKey`): je Vorgang und Revision genau eine Datei, auch wenn ein Wiederholungslauf eine inhaltlich geänderte Karte erzeugt. `DocumentRef.Reference` (signierte URLs, Datei-IDs) steht **nicht** in der abgelegten Datei, nur Art, Quelle und Dateiname; die Prozess-DB speichert die Karte vollständig. Konzept: Datenkarte in der Prozess-DB und in HubSpot.
 
 ### Status-Properties
 
@@ -42,6 +42,8 @@ Die NAB-Datenkarte legt `AggregateDataCardStep` nach erfolgreicher Aggregation a
 | `MastrNummerAnlage`, `MastrNummerSpeicher` | MaStR-Nummern | nur wenn vorhanden; ein leerer Stand überschreibt keinen von Hand gepflegten Wert |
 
 Leerer Property-Name = Feld wird nicht geschrieben. Ist keiner gesetzt, entfällt der PATCH. Idempotent, da immer der aktuelle Stand geschrieben wird.
+
+**Dauerhaft abgelehnter PATCH** (4xx außer 429, z. B. falscher Property-Name, fehlender Optionswert der Status-Property, Deal gelöscht): Wiederholen hilft nicht. Der Sink loggt Error (Prozess-ID, Zustand, Statuscode), schickt **einmal je Vorgang und Zustand** einen Alarm an den Betreiber (Ledger-Schlüssel `alert:status:<prozess>:<zustand>`) und kehrt normal zurück. Transiente Fehler (429, 5xx, Netzwerk) werfen weiter; der Aufrufer loggt Warning, der nächste Lauf holt nach.
 
 ### Audit-Stufen
 
@@ -61,7 +63,9 @@ Aufgaben, Notizen und Dateien laufen über `HubSpotWriteOnce` und die Tabelle `c
 |---|---|
 | Aufgabe | `task:<taskKey>` (der Task-Schlüssel des Kerns, z. B. `blocked:<prozess>:<zeitpunkt>`) |
 | Audit-Notiz | `note:<prozess>:<typ>:<anzahl zustandswechsel>:<hash nachricht>` – ein Retry oder erneuter Lauf mit demselben Ereignis im selben Zustand ergibt dieselbe Notiz |
-| Datei | `file:<dealId>:<hash dateiname>:<sha-256 inhalt>` – gleicher Name und Inhalt = keine zweite Datei |
+| Datei mit `ArchiveKey` (Datenkarte) | `file:<dealId>:<ArchiveKey>`, also `file:<dealId>:datacard:<prozess>:r<Revision>` – eine Datei je Schlüssel, unabhängig vom Inhalt |
+| Datei ohne `ArchiveKey` (Antragsunterlagen) | `file:<dealId>:<hash dateiname>:<sha-256 inhalt>` – gleicher Name und Inhalt = keine zweite Datei |
+| Alarm „Status abgelehnt“ | `alert:status:<prozess>:<zustand>` – ein Alarm je Vorgang und Zustand |
 | Ablage-Notiz | `file-note:<dealId>:<hash der datei-schlüssel>` – dieselben Dateien = keine zweite Notiz |
 
 Hashes (SHA-256, gekürzt auf 16 Hex-Zeichen) statt Klartext, weil Dateinamen und Nachrichten nicht in Schlüssel und Log gehören. Dateien und Ablage-Notiz hängen an der Deal-ID statt an der Prozess-ID, weil `IDocumentArchive` nur die Deal-ID bekommt; Deal und Vorgang sind 1:1 (eindeutiger Index auf `processes.CrmProjectId`).
@@ -70,7 +74,8 @@ Ablauf: Ledger prüfen → Treffer: nichts anlegen (Debug-Log) → sonst in HubS
 
 **Verbleibende Lücken (bewusst, Dublette statt verlorenem Write):**
 - Absturz oder DB-Ausfall genau zwischen erfolgreichem HubSpot-Request und Ledger-Eintrag → der Retry legt das Objekt ein zweites Mal an.
-- HubSpot legt an, antwortet aber mit 5xx/429 → der Backoff-Handler wiederholt den `POST`.
+- HubSpot legt an, antwortet aber mit 5xx → der Backoff wiederholt den anlegenden `POST` nicht, der Fehler geht an den Job; der Job-Retry findet keinen Ledger-Eintrag und legt ein zweites Mal an. (Bei 429 legt HubSpot nichts an, dort wiederholt der Backoff gefahrlos.)
+- Der Notiz-Schlüssel hängt an `AnmeldeProcess.Transitions.Count`; die Historie wird deshalb nie gekürzt.
 - Objekttypen ohne vordefinierten Verknüpfungstyp: Abbruch zwischen Anlegen und Verknüpfen → unverknüpftes Objekt, der Retry legt ein neues an.
 
 Der Status-PATCH braucht kein Ledger (schreibt immer den aktuellen Stand).
@@ -78,7 +83,7 @@ Der Status-PATCH braucht kein Ledger (schreibt immer den aktuellen Stand).
 ## Fehlerbehandlung
 
 - **Fachlich** (Deal nicht gefunden, Felder fehlen/ungültig, keine Vollmacht): `CrmProjectData.Problems` → Aggregator → HubSpot-Aufgabe. Kein Retry.
-- **Technisch** (401/403/5xx nach Backoff, Netzwerk, beim Schreiben auch 4xx): `HttpRequestException` mit Pfad und Status, nie Body → Hangfire-Retry → danach „blockiert“ + Alarm. Lesen: 404 auf den Deal ist fachlich; beim Schreiben ist jeder Fehlerstatus technisch.
+- **Technisch** (401/403/5xx nach Backoff, Netzwerk, beim Schreiben auch 4xx): `HttpRequestException` mit Pfad und Status, nie Body → Hangfire-Retry → danach „blockiert“ + Alarm. Lesen: 404 auf den Deal ist fachlich; beim Schreiben ist jeder Fehlerstatus technisch – Ausnahme Status-PATCH mit 4xx außer 429 (dauerhaft, Error-Log + einmaliger Alarm, siehe „Status-Properties“).
 - MaStR-Login: fehlt eine der beiden Properties (am Deal oder in der Konfiguration) → `null` → Aufgabe „MaStR-Login fehlt“ (Kern).
 
 **Alarm zuerst, HubSpot best effort** (Entscheidung Martin, 06.11.):
@@ -97,8 +102,10 @@ Strukturierte Templates. Information: jeder Write (Typ, Deal-ID, Schlüssel), Le
 
 ## Mapping-Regeln
 
-- Betreiber-Felder leer → Betreiber = Kunde. Abweichender Betreiber: Vor- und Nachname aus den Betreiber-Feldern; E-Mail, Telefon und IBAN bleiben die des Kunden. **Keine eigene Betreiber-Adresse** – es gilt die Kundenadresse (Entscheidung Martin, 06.11.).
-- Anlagenort leer → Kundenadresse. Getrennte Adressfelder haben Vorrang vor der einzeiligen Adresse; nicht zerlegbar → fachliches Problem.
+- Betreiber-Felder leer → Betreiber = Kunde. Abweichender Betreiber: Vor- und Nachname aus den Betreiber-Feldern; E-Mail, Telefon und IBAN bleiben die des Kunden.
+- **Betreiberadresse** (`CrmProjectData.Betreiberadresse` → `NabDataCard.Betreiberadresse`) = immer die Kundenadresse, auch bei abweichendem Betreiber (Entscheidung Martin, 06.11.; keine eigenen Betreiber-Adressfelder). Kein Pflichtfeld: fehlt die Kundenadresse bei abweichendem Anlagenort (oder ist sie dann nicht zerlegbar), meldet der Adapter nichts und der Aggregator nimmt die Anlagenadresse.
+- Anlagenort leer → Kundenadresse. Getrennte Adressfelder haben Vorrang vor der einzeiligen Adresse; nicht zerlegbar → fachliches Problem. Endet das Straßenfeld auf eine Hausnummer und ist zugleich das Hausnummernfeld gesetzt → fachliches Problem (nur Feldnamen). Ein Land am Ende der einzeiligen Adresse („Deutschland“, „Germany“, „DE“) wird abgeschnitten, auch ohne Komma.
+- Datum/Zeit: reine Datumswerte (`yyyy-MM-dd`, Epoch-ms auf Mitternacht UTC) gelten als Kalendertag, wie sie sind. Werte mit Uhrzeit (ISO 8601 mit Zeit, Epoch-ms ungleich Mitternacht UTC) werden in `HubSpot:TimeZone` (Default `Europe/Berlin`) umgerechnet, dann zählt der Kalendertag. Gilt für die Termine am Deal und für Datums-Trigger.
 - Installationstermin = der spätere von Termin Elektroinstallation und Termin Dachmontage.
 - Einspeiseart über `HubSpot:EinspeiseartValues`, leer = Teileinspeisung, unbekannter Wert = Problem. NH-Sicherung leer = 63 A.
 - Errichter: Deal-Override (`ErrichterFirma` gesetzt) vor Sektion `Errichter` der Instanz; beides leer → fehlendes Feld.
@@ -112,6 +119,8 @@ Beschluss Termin 3 (26.10.): Passwort nach erfolgreicher Registrierung löschen.
 
 - Interne Property-Namen und Stage-IDs fehlen bis zum Token (Struktur-Endpunkt); bis dahin leer in `instance.json`.
 - Scopes in Michaels Anleitung: Deals, Notizen, E-Mails, Aufgaben, Dateien statt Projekte/Kontakte.
-- Scheitert die Alarm-Mail selbst, wird das nur geloggt (Error); eine zweite Retry-Kette alarmiert nicht erneut, weil der Vorgang schon blockiert ist. Erinnerung kommt über den Watchdog (Frist `Blocked`, 1 Tag) – sofern HubSpot dann erreichbar ist.
+- **Endzustände holen keinen gescheiterten Status nach:** Scheitert der PATCH beim Wechsel nach `Completed` oder `Cancelled` (transient), läuft der Vorgang nicht mehr; HubSpot zeigt den vorigen Status, bis jemand eingreift (nur Warning im Log).
+- **Kein erneuter Alarm nach gescheitertem Alarm:** Scheitert die Alarm-Mail beim Blockieren, wird das nur geloggt (Error); eine zweite Retry-Kette alarmiert nicht erneut, weil der Vorgang schon blockiert ist. Erinnerung nur über den Watchdog (Frist `Blocked`, 1 Tag), und dessen Aufgabe braucht ein erreichbares HubSpot.
+- **Umlaute im Multipart-Dateinamen** (z. B. „Zählerantrag.pdf“) gegen echtes HubSpot prüfen: .NET schreibt zusätzlich `filename*` (RFC 5987); ob die Files API den Namen korrekt übernimmt, ist ungetestet.
 - Download der Vollmacht und Einbindung ins Antragspaket kommt mit der PDF-Erzeugung.
 - Abnahme der Abweichung „MaStR-Passwort nicht löschen“ durch Michael (09.11.).

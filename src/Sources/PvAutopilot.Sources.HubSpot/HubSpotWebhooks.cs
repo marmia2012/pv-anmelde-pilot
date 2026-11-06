@@ -116,7 +116,7 @@ public sealed class HubSpotTriggerEvaluator(IOptions<HubSpotOptions> options, IL
         DateOnly? date = null;
         if (rule.IsDate)
         {
-            if (!HubSpotDate.TryParse(value, out var parsed))
+            if (!HubSpotDate.TryParse(value, options.Value.ResolveTimeZone(), out var parsed))
             {
                 // Wert nicht loggen: Freitext-Properties können personenbezogene Daten enthalten.
                 logger.LogWarning("{TriggerKind} für Projekt {CrmProjectId} ignoriert: {PropertyName} ist kein gültiges Datum",

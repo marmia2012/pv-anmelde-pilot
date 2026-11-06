@@ -8,7 +8,7 @@ namespace PvAutopilot.Sources.HubSpot.Mapping;
 
 /// <summary>
 /// Übersetzt die Properties eines Deals in <see cref="CrmProjectData"/> (ohne Dokumente).
-/// Regeln: Betreiber-Felder leer → Betreiber = Kunde; Anlagenort leer → Kundenadresse;
+/// Regeln: Betreiber-Felder leer → Betreiber = Kunde; Betreiberadresse = Kundenadresse; Anlagenort leer → Kundenadresse;
 /// Installationstermin = der spätere von Elektroinstallation und Dachmontage.
 /// Problemtexte nennen nur fachliche Schlüssel, nie Werte.
 /// </summary>
@@ -20,15 +20,24 @@ public static class DealMapper
     {
         var ctx = new Context(deal, options);
 
-        // Die Kundenadresse wird nur als Ersatz für den Anlagenort gebraucht.
-        var anlagenadresse = ctx.HasAny(K.AnlageStrasse, K.AnlageHausnummer, K.AnlagePlz, K.AnlageOrt, K.AnlageAdresse)
+        // Anlagenort: eigene Anlage-Felder, sonst die Kundenadresse (dann Pflicht).
+        var abweichenderAnlagenort = ctx.HasAny(K.AnlageStrasse, K.AnlageHausnummer, K.AnlagePlz, K.AnlageOrt, K.AnlageAdresse);
+        var anlagenadresse = abweichenderAnlagenort
             ? ctx.Address("Anlagenadresse", K.AnlageStrasse, K.AnlageHausnummer, K.AnlagePlz, K.AnlageOrt, K.AnlageAdresse)
             : ctx.Address("Kundenadresse (als Anlagenadresse)", K.KundeStrasse, K.KundeHausnummer, K.KundePlz, K.KundeOrt, K.KundeAdresse);
+
+        // Betreiberadresse = immer die Kundenadresse, auch bei abweichendem Betreiber (Entscheidung Martin, 06.11.).
+        // Bei abweichendem Anlagenort ist sie kein Pflichtfeld: Lücken werden nicht gemeldet (eigener Kontext, Probleme
+        // verworfen), der Aggregator nimmt dann die Anlagenadresse.
+        var betreiberadresse = abweichenderAnlagenort
+            ? new Context(deal, options).Address("Kundenadresse", K.KundeStrasse, K.KundeHausnummer, K.KundePlz, K.KundeOrt, K.KundeAdresse)
+            : anlagenadresse;
 
         var data = new CrmProjectData
         {
             PlanningProjectId = ctx.Get(K.ReonicProjectId),
             Anlagenbetreiber = ctx.Betreiber(),
+            Betreiberadresse = betreiberadresse,
             Anlagenadresse = anlagenadresse,
             Errichter = ctx.Errichter(),
             Einspeiseart = ctx.Einspeiseart(),
@@ -65,7 +74,8 @@ public static class DealMapper
         public Person? Betreiber()
         {
             // Abweichender Betreiber: Kontaktdaten und IBAN bleiben die des Kunden (Ansprechpartner von reinsolar).
-            // Eine eigene Betreiber-Adresse gibt es vorerst nicht, es gilt die Kundenadresse (Entscheidung Martin, 06.11.).
+            // Eine eigene Betreiber-Adresse gibt es vorerst nicht, es gilt die Kundenadresse (Entscheidung Martin, 06.11.;
+            // CrmProjectData.Betreiberadresse, siehe Map).
             var abweichend = HasAny(K.BetreiberVorname, K.BetreiberNachname);
             var (vornameKey, nachnameKey) = abweichend
                 ? (K.BetreiberVorname, K.BetreiberNachname)
@@ -102,6 +112,12 @@ public static class DealMapper
                 // Hausnummer fehlt, steht aber evtl. im Straßenfeld („Musterstr. 12a“).
                 if (nr is null && strasse is not null && AddressParser.SplitStreet(strasse) is { } split)
                     (strasse, nr) = split;
+                // Nummer im Straßenfeld und im Hausnummernfeld: unklar, welche gilt (z. B. „Musterstr. 12“ + „14“).
+                else if (nr is not null && strasse is not null && AddressParser.SplitStreet(strasse) is not null)
+                {
+                    Missing($"{label}: Straßenfeld endet auf eine Hausnummer und {nrKey} ist gesetzt", strasseKey, nrKey);
+                    return null;
+                }
 
                 var fehlend = new[] { (strasse, strasseKey), (nr, nrKey), (plz, plzKey), (ort, ortKey) }
                     .Where(x => x.Item1 is null).Select(x => x.Item2).ToArray();
@@ -184,7 +200,7 @@ public static class DealMapper
         {
             if (Get(key) is not { } value)
                 return null;
-            if (HubSpotDate.TryParse(value, out var date))
+            if (HubSpotDate.TryParse(value, options.ResolveTimeZone(), out var date))
                 return date;
             Missing($"{key}: kein gültiges Datum", key);
             return null;

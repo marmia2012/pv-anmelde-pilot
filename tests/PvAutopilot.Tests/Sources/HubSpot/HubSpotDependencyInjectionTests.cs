@@ -32,6 +32,8 @@ public class HubSpotDependencyInjectionTests
         services.AddLogging();
         services.AddSingleton<TimeProvider>(new FixedTime(TestData.Now));
         services.AddSingleton<ICrmWriteLedger>(new InMemoryCrmWriteLedger());
+        // Infrastructure registriert den echten Alarm; der Status-Sink braucht ihn für dauerhaft abgelehnte PATCHes.
+        services.AddSingleton<IOperatorAlert>(new PvAutopilot.Tests.Core.CountingAlert());
         // Backoff ohne echte Wartezeit; AddHubSpot übernimmt eine vorhandene Registrierung.
         services.AddTransient(_ => new ExponentialBackoffHandler((delay, _) =>
         {

@@ -23,8 +23,9 @@ namespace PvAutopilot.Sources.HubSpot;
 /// Reihenfolge: Ledger prüfen → in HubSpot anlegen → sofort im Ledger festhalten (ohne Abbruch-Token, damit ein
 /// Abbruch des Jobs nicht genau dazwischen fällt). Verbleibende Lücke: stürzt der Prozess zwischen dem erfolgreichen
 /// HubSpot-Request und dem Ledger-Eintrag ab (oder ist die Datenbank genau dann weg), legt der Retry das Objekt ein
-/// zweites Mal an. Ebenso, wenn HubSpot das Objekt anlegt, aber mit 5xx antwortet und der Backoff-Handler den POST
-/// wiederholt. Eine Dublette ist dort das kleinere Übel gegenüber einer verlorenen Aufgabe (docs/konzept/hubspot-adapter.md).
+/// zweites Mal an. Ebenso, wenn HubSpot das Objekt anlegt, aber mit 5xx antwortet: der Backoff wiederholt anlegende
+/// POSTs nur bei 429 (dann ist nichts angelegt), den 5xx wiederholt der Job – ohne Ledger-Eintrag greift die Prüfung dort
+/// nicht. Eine Dublette ist das kleinere Übel gegenüber einer verlorenen Aufgabe (docs/konzept/hubspot-adapter.md).
 /// </remarks>
 public sealed class HubSpotWriteOnce(ICrmWriteLedger ledger, ILogger<HubSpotWriteOnce> logger)
 {
@@ -160,7 +161,8 @@ public sealed class HubSpotAuditSink(
 
 /// <summary>
 /// Legt Dokumente privat in HubSpot-Dateien ab (Ordner <c>/pv-autopilot/&lt;dealId&gt;</c>) und hängt sie mit einer
-/// Notiz an den Deal. Gleicher Name und Inhalt = keine zweite Datei; gleiche Dateien = keine zweite Notiz.
+/// Notiz an den Deal. Gleicher Ablage-Schlüssel (bzw. ohne: gleicher Name und Inhalt) = keine zweite Datei;
+/// gleiche Dateien = keine zweite Notiz.
 /// </summary>
 public sealed class HubSpotDocumentArchive(
     HubSpotApiClient api,
@@ -210,16 +212,32 @@ public sealed class HubSpotDocumentArchive(
             o.ObjectTypeId, crmProjectId, token), ct);
     }
 
-    /// <summary>Deal + Hash des Dateinamens (kann Kundennamen enthalten) + SHA-256 des Inhalts.</summary>
+    /// <summary>
+    /// Mit <see cref="GeneratedDocument.ArchiveKey"/>: Deal + dieser stabile Schlüssel (eine Datei je Schlüssel, auch bei
+    /// geändertem Inhalt). Sonst Deal + Hash des Dateinamens (kann Kundennamen enthalten) + SHA-256 des Inhalts.
+    /// </summary>
     public static string FileKey(string dealId, GeneratedDocument document) =>
-        $"file:{dealId}:{HubSpotWriteOnce.ShortHash(document.FileName)}:{HubSpotWriteOnce.Sha256(document.Content)}";
+        document.ArchiveKey is { Length: > 0 } stable
+            ? $"file:{dealId}:{stable}"
+            : $"file:{dealId}:{HubSpotWriteOnce.ShortHash(document.FileName)}:{HubSpotWriteOnce.Sha256(document.Content)}";
 }
 
 /// <summary>
 /// Spiegelt den Stand des Vorgangs an den Deal (<c>PATCH</c>), Property-Namen aus <see cref="HubSpotOptions.Properties"/>;
 /// leerer Name = Feld wird nicht geschrieben. Idempotent, da immer der aktuelle Stand geschrieben wird.
 /// </summary>
-public sealed class HubSpotStatusSink(HubSpotApiClient api, IOptions<HubSpotOptions> options, ILogger<HubSpotStatusSink> logger) : ICrmStatusSink
+/// <remarks>
+/// Ein 4xx außer 429 (z. B. Property-Name falsch, Optionswert der Status-Property fehlt, Deal gelöscht) wird durch
+/// Wiederholen nicht besser: Error-Log und einmal je Vorgang und Zustand ein Alarm an den Betreiber (Schlüssel
+/// <c>alert:status:&lt;prozess&gt;:&lt;zustand&gt;</c> im <see cref="ICrmWriteLedger"/>), danach kehrt der Sink normal zurück.
+/// Transiente Fehler (429, 5xx, Netzwerk) werfen weiter; der Aufrufer loggt sie als Warning und der nächste Lauf holt nach.
+/// </remarks>
+public sealed class HubSpotStatusSink(
+    HubSpotApiClient api,
+    ICrmWriteLedger ledger,
+    IOperatorAlert alert,
+    IOptions<HubSpotOptions> options,
+    ILogger<HubSpotStatusSink> logger) : ICrmStatusSink
 {
     public const string WriteType = "Status";
 
@@ -234,9 +252,42 @@ public sealed class HubSpotStatusSink(HubSpotApiClient api, IOptions<HubSpotOpti
             return;
         }
 
-        await api.UpdateObjectAsync(o.ObjectTypeId, process.CrmProjectId, properties, ct);
+        try
+        {
+            await api.UpdateObjectAsync(o.ObjectTypeId, process.CrmProjectId, properties, ct);
+        }
+        catch (HttpRequestException ex) when (IsPermanent(ex.StatusCode))
+        {
+            await PermanentFailureAsync(process, (int)ex.StatusCode!.Value, ct);
+            return;
+        }
         logger.LogInformation("HubSpot-{WriteType} für Deal {DealId} geschrieben: {State} ({PropertyCount} Properties)",
             WriteType, process.CrmProjectId, process.State, properties.Count);
+    }
+
+    public static bool IsPermanent(System.Net.HttpStatusCode? status) =>
+        status is { } code && (int)code is >= 400 and < 500 && code != System.Net.HttpStatusCode.TooManyRequests;
+
+    public static string AlertKey(AnmeldeProcess process) => $"alert:status:{process.Id:N}:{process.State}";
+
+    private async Task PermanentFailureAsync(AnmeldeProcess process, int statusCode, CancellationToken ct)
+    {
+        logger.LogError("HubSpot-{WriteType} für Vorgang {ProcessId} in {State} dauerhaft abgelehnt: HTTP {StatusCode}",
+            WriteType, process.Id, process.State, statusCode);
+
+        var key = AlertKey(process);
+        if (await ledger.FindAsync(key, ct) is not null)
+        {
+            logger.LogDebug("Alarm {WriteKey} schon gesendet", key);
+            return;
+        }
+
+        // Kein Body und keine Werte: nur Vorgang, Zustand, Statuscode.
+        await alert.SendAsync($"HubSpot-Status für Vorgang {process.Id} abgelehnt",
+            $"PATCH am Deal {process.CrmProjectId} im Zustand {process.State}: HTTP {statusCode}. "
+            + "Bitte HubSpot:Properties (Status, Netzbetreiber, Fehlertext, MaStR-Nummern) und die Optionswerte der Status-Property prüfen.",
+            null, ct);
+        await ledger.RecordAsync(key, "alert", CancellationToken.None);
     }
 
     /// <summary>

@@ -47,7 +47,7 @@ public static class AdminEndpoints
             }
         });
 
-        admin.MapGet("/processes/{id:guid}",async (Guid id, IProcessStore store, CancellationToken ct) =>
+        admin.MapGet("/processes/{id:guid}", async (Guid id, IProcessStore store, CancellationToken ct) =>
             await store.GetAsync(id, ct) is { } p
                 ? Results.Ok(new
                 {

@@ -56,6 +56,8 @@ public sealed class NabDataCardAggregator(
         var card = new NabDataCard
         {
             Anlagenbetreiber = project.Anlagenbetreiber,
+            // Kein Pflichtfeld: ohne eigene Betreiberadresse gilt der Anlagenort.
+            Betreiberadresse = project.Betreiberadresse ?? project.Anlagenadresse,
             Anlagenadresse = project.Anlagenadresse,
             Errichter = errichter,
             Einspeiseart = project.Einspeiseart ?? Einspeiseart.Teileinspeisung,

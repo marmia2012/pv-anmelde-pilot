@@ -10,6 +10,14 @@ namespace PvAutopilot.Core.DataCard;
 public sealed record NabDataCard
 {
     public required Person Anlagenbetreiber { get; init; }
+
+    /// <summary>
+    /// Anschrift des Anlagenbetreibers (Formulare: Anschlussnehmer/Anlagenbetreiber). Der Aggregator füllt sie immer
+    /// (Fallback <see cref="Anlagenadresse"/>); <c>null</c> nur bei Datenkarten aus der Zeit vor diesem Feld.
+    /// Straße und Hausnummer sind über <see cref="PostalAddress"/> als personenbezogen markiert.
+    /// </summary>
+    public PostalAddress? Betreiberadresse { get; init; }
+
     public required PostalAddress Anlagenadresse { get; init; }
     public required Anlagenerrichter Errichter { get; init; }
 

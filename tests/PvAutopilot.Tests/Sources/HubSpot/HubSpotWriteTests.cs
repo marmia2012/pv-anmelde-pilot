@@ -39,7 +39,8 @@ public class HubSpotWriteTests
     private HubSpotDocumentArchive Archive() =>
         new(_rig.Api, Once(), HubSpotRig.Wrap(_rig.Options), _time, NullLogger<HubSpotDocumentArchive>.Instance);
 
-    private HubSpotStatusSink Status() => new(_rig.Api, HubSpotRig.Wrap(_rig.Options), NullLogger<HubSpotStatusSink>.Instance);
+    private HubSpotStatusSink Status() =>
+        new(_rig.Api, _ledger, new PvAutopilot.Tests.Core.CountingAlert(), HubSpotRig.Wrap(_rig.Options), NullLogger<HubSpotStatusSink>.Instance);
 
     private HubSpotMastrCredentialStore Mastr() => new(_rig.Api, HubSpotRig.Wrap(_rig.Options), NullLogger<HubSpotMastrCredentialStore>.Instance);
 

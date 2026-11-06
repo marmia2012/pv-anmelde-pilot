@@ -5,13 +5,14 @@ namespace PvAutopilot.Sources.HubSpot.Mapping;
 
 /// <summary>
 /// Zerlegt deutsche Anschriften. Einzeilig: „Straße Nr, PLZ Ort“, auch ohne Komma, mit Zeilenumbruch,
-/// „D-“ vor der PLZ oder „, Deutschland“ am Ende. Hausnummern wie <c>12</c>, <c>12a</c>, <c>12 a</c>, <c>12-14</c>, <c>12/1</c>.
+/// „D-“ vor der PLZ oder einem Land am Ende („Deutschland“, „Germany“, „DE“; mit Komma/Zeilenumbruch oder nur durch
+/// Leerzeichen getrennt, z. B. „47051 Duisburg Deutschland“). Hausnummern wie <c>12</c>, <c>12a</c>, <c>12 a</c>, <c>12-14</c>, <c>12/1</c>.
 /// </summary>
 public static partial class AddressParser
 {
     private const string HouseNumber = @"\d+\s?[a-zA-Z]?(?:\s?[-/]\s?\d+\s?[a-zA-Z]?)?";
 
-    [GeneratedRegex(@"^(?<strasse>.*?\D)\s*(?<nr>" + HouseNumber + @")\s*(?:[,;\r\n]+\s*|\s+)(?:D\s?-\s?)?(?<plz>\d{5})\s+(?<ort>[^,;\r\n]+?)\s*(?:[,;\r\n]+\s*(?:Deutschland|Germany|DE))?\s*$",
+    [GeneratedRegex(@"^(?<strasse>.*?\D)\s*(?<nr>" + HouseNumber + @")\s*(?:[,;\r\n]+\s*|\s+)(?:D\s?-\s?)?(?<plz>\d{5})\s+(?<ort>[^,;\r\n]+?)\s*(?:(?:[,;\r\n]+\s*|\s+)(?:Deutschland|Germany|DE))?\s*$",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 200)]
     private static partial Regex SingleLine();
 
