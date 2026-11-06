@@ -42,8 +42,12 @@ public sealed class HubSpotTriggerEvaluator(IOptions<HubSpotOptions> options, IL
         {
             if (e.ObjectId is null || string.IsNullOrWhiteSpace(e.PropertyValue))
                 continue;
-            if (!string.IsNullOrEmpty(o.ProjectObjectTypeId) && e.ObjectTypeId is { } type && type != o.ProjectObjectTypeId)
+            if (!IsConfiguredObject(e, o.ObjectTypeId))
+            {
+                logger.LogDebug("HubSpot-Webhook {SubscriptionType} (Objekttyp {EventObjectTypeId}) ignoriert: nicht Objekttyp {ObjectTypeId}",
+                    e.SubscriptionType, e.ObjectTypeId, o.ObjectTypeId);
                 continue;
+            }
 
             var id = e.ObjectId.Value.ToString();
             foreach (var rule in rules.Where(r => Matches(r, e)))
@@ -55,6 +59,37 @@ public sealed class HubSpotTriggerEvaluator(IOptions<HubSpotOptions> options, IL
 
         // HubSpot liefert Ereignisse mehrfach; die Verarbeitung ist idempotent, doppelte trotzdem filtern.
         return triggers.Distinct().ToList();
+    }
+
+    /// <summary>Klassische Abo-Namen (<c>deal.propertyChange</c> usw.) der Standardobjekte; sie liefern kein <c>objectTypeId</c>.</summary>
+    private static readonly Dictionary<string, string> ClassicSubscriptionObjects = new(StringComparer.Ordinal)
+    {
+        ["0-1"] = "contact", ["0-2"] = "company", ["0-3"] = "deal", ["0-5"] = "ticket",
+    };
+
+    private const string PropertyChange = ".propertyChange";
+
+    /// <summary>
+    /// Nur Property-Änderungen am konfigurierten Objekttyp: <c>deal.propertyChange</c> (klassisches Deal-Abo, für den
+    /// Deal <c>0-3</c>), <c>object.propertyChange</c> mit passendem <c>objectTypeId</c> (generisches Abo), ohne
+    /// <c>subscriptionType</c> wie bisher nach <c>objectTypeId</c>, falls vorhanden. Alles andere (z. B. Kontakt-Ereignisse,
+    /// <c>deal.creation</c>) wird ignoriert, damit keine fremde Objekt-ID als Deal-ID ankommt.
+    /// </summary>
+    private static bool IsConfiguredObject(WebhookEvent e, string objectTypeId)
+    {
+        if (e.ObjectTypeId is { } type && type != objectTypeId)
+            return false;
+        if (string.IsNullOrWhiteSpace(e.SubscriptionType))
+            return true;
+
+        var subscription = e.SubscriptionType.Trim();
+        if (!subscription.EndsWith(PropertyChange, StringComparison.OrdinalIgnoreCase))
+            return false;
+        var objectName = subscription[..^PropertyChange.Length];
+        if (string.Equals(objectName, "object", StringComparison.OrdinalIgnoreCase))
+            return e.ObjectTypeId == objectTypeId;
+        return ClassicSubscriptionObjects.TryGetValue(objectTypeId, out var expected)
+            && string.Equals(objectName, expected, StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool Matches(HubSpotTriggerRule rule, WebhookEvent e) =>
@@ -81,7 +116,7 @@ public sealed class HubSpotTriggerEvaluator(IOptions<HubSpotOptions> options, IL
         DateOnly? date = null;
         if (rule.IsDate)
         {
-            if (!HubSpotDate.TryParse(value, out var parsed))
+            if (!HubSpotDate.TryParse(value, options.Value.ResolveTimeZone(), out var parsed))
             {
                 // Wert nicht loggen: Freitext-Properties können personenbezogene Daten enthalten.
                 logger.LogWarning("{TriggerKind} für Projekt {CrmProjectId} ignoriert: {PropertyName} ist kein gültiges Datum",
@@ -101,6 +136,7 @@ public sealed class HubSpotTriggerEvaluator(IOptions<HubSpotOptions> options, IL
     }
 
     private sealed record WebhookEvent(
+        [property: JsonPropertyName("subscriptionType")] string? SubscriptionType,
         [property: JsonPropertyName("objectId")] long? ObjectId,
         [property: JsonPropertyName("objectTypeId")] string? ObjectTypeId,
         [property: JsonPropertyName("propertyName")] string? PropertyName,

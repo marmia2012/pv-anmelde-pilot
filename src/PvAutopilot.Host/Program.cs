@@ -32,7 +32,7 @@ builder.Services.AddSerilog((services, logger) => logger
     .WriteTo.Console(new RenderedCompactJsonFormatter()));
 
 builder.Services
-    .AddAutopilotCore()
+    .AddAutopilotCore(builder.Configuration)
     .AddAutopilotInfrastructure(builder.Configuration)
     .AddHubSpot(builder.Configuration)
     .AddReonic(builder.Configuration)

@@ -10,6 +10,14 @@ namespace PvAutopilot.Core.DataCard;
 public sealed record NabDataCard
 {
     public required Person Anlagenbetreiber { get; init; }
+
+    /// <summary>
+    /// Anschrift des Anlagenbetreibers (Formulare: Anschlussnehmer/Anlagenbetreiber). Der Aggregator füllt sie immer
+    /// (Fallback <see cref="Anlagenadresse"/>); <c>null</c> nur bei Datenkarten aus der Zeit vor diesem Feld.
+    /// Straße und Hausnummer sind über <see cref="PostalAddress"/> als personenbezogen markiert.
+    /// </summary>
+    public PostalAddress? Betreiberadresse { get; init; }
+
     public required PostalAddress Anlagenadresse { get; init; }
     public required Anlagenerrichter Errichter { get; init; }
 
@@ -92,9 +100,14 @@ public sealed record Wallbox(string Hersteller, string Modell, decimal LeistungK
 
 /// <summary>
 /// Verweis auf ein Dokument in einer Quelle (z. B. Reonic-Datei, SharePoint-Item, HubSpot-Datei).
-/// <see cref="Reference"/> kann eine signierte URL auf Kundenfotos sein und wird deshalb maskiert.
+/// <see cref="Reference"/> kann eine signierte URL auf Kundenfotos sein, <see cref="FileName"/> den Kundennamen enthalten
+/// (z. B. „Vollmacht Mustermann.pdf“); beide werden deshalb im Log maskiert.
 /// </summary>
-public sealed record DocumentRef(DocumentKind Kind, string Source, [property: PersonalData] string Reference, string FileName);
+public sealed record DocumentRef(
+    DocumentKind Kind,
+    string Source,
+    [property: PersonalData] string Reference,
+    [property: PersonalData] string FileName);
 
 public enum Einspeiseart { Teileinspeisung, Volleinspeisung }
 

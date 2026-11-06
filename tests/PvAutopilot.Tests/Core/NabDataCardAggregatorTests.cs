@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Options;
 using PvAutopilot.Core.DataCard;
 using PvAutopilot.Core.Sources;
 
@@ -24,7 +25,7 @@ public class NabDataCardAggregatorTests
     };
 
     private Task<DataCardAggregation> Aggregate() =>
-        new NabDataCardAggregator(new Crm(_crm), new Planning(_plan), new NoDocuments()).AggregateAsync("crm-1", default);
+        new NabDataCardAggregator(new Crm(_crm), new Planning(_plan), new NoDocuments(), Options.Create(new ErrichterOptions())).AggregateAsync("crm-1", default);
 
     [Fact]
     public async Task Complete_sources_give_complete_card()

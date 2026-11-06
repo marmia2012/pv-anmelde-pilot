@@ -9,16 +9,16 @@
 | Baustein | Entscheidung |
 |---|---|
 | Prozesssteuerung | Eigene State-Machine (Postgres) + Hangfire-Jobs; idempotent, ereignisgesteuert |
-| Trigger | HubSpot-Webhook auf Projekt-/Deal-Status (Pipeline: Termine an Kunde gesendet & unterschriebene Vollmacht zurück) |
+| Trigger | HubSpot-Webhook auf die Deal-Stage (`dealstage`, Deal-Pipeline: Termine an Kunde gesendet & unterschriebene Vollmacht zurück). Objekttyp konfigurierbar (`HubSpot:ObjectTypeId`, Default Deal `0-3`), falls reinsolar später HubSpot-Projekte nutzt (Klärung 06.11.) |
 | NB-Anbindung | Reiner Code-Adapter je Netzbetreiber |
 | NB-Ermittlung | PLZ-Tabelle in der Prozess-DB, pflegbar per Admin-Endpoint/CSV |
 | Einreichung | Vollautomatisch; Go-live in drei Stufen: Dry-Run auf Staging → Einreichung mit Prüfschritt vor dem Absenden → live |
 | UI | Nur HubSpot (Status, Timeline, Tasks) |
-| Audit-Log | HubSpot + technisches Log (Serilog) |
-| Ablage erzeugter Dokumente | HubSpot (am Deal/Projekt) |
+| Audit-Log | HubSpot (Notizen am Deal, gefiltert nach `HubSpot:AuditLevel`) + technisches Log (Serilog, vollständig) |
+| Ablage erzeugter Dokumente | HubSpot-Dateien (privat, `/pv-autopilot/<dealId>`) + Notiz mit Anhängen am Deal |
 | Postfach anschlussplanung@reinsolar.de | Exchange/M365 → Microsoft Graph |
 | KI | OpenAI-API über reinsolars Plattformzugang; eigene Usage-Limits, kein Training. Einsatz: Mails klassifizieren, Datenblätter auslesen, Antwortentwürfe (Mensch sendet) |
-| MaStR | Playwright im Webportal mit Kundenlogin aus HubSpot (kommt über ein Webformular auf der reinsolar-Website). SOAP-Webdienst scheidet aus (bräuchte Vollmacht für alle Kunden). Passwort wird nach erfolgreicher Registrierung gelöscht |
+| MaStR | Playwright im Webportal mit Kundenlogin aus HubSpot (kommt über ein Webformular auf der reinsolar-Website). SOAP-Webdienst scheidet aus (bräuchte Vollmacht für alle Kunden). Passwort wird nach der Registrierung **nicht** gelöscht, es bleibt am Deal: bewusste Abweichung vom Beschluss 26.10. (Termin 3) auf Martins Wunsch, Bestätigung durch Michael am 09.11. offen |
 | Lageplan | TIM-online bzw. WMS Geobasis NRW (ALKIS) – Schnittstelle noch zu prüfen |
 | Datenblätter | Vorerst SharePoint; später ggf. als Anhang am HubSpot-Artikel |
 | Fehler fachlich | HubSpot-Task |

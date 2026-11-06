@@ -106,16 +106,31 @@ public sealed class ProcessEngine
         return map;
     }
 
+    /// <summary>
+    /// Ein Lauf: Schritte bis zum Warten. Danach wird der aktuelle Stand ins CRM gespiegelt, wenn er in diesem Lauf
+    /// noch nicht erfolgreich veröffentlicht wurde – auch ohne Zustandswechsel. So holt jeder Lauf einen zuvor
+    /// gescheiterten Status-PATCH nach (best effort, idempotent). Endzustände bleiben unberührt.
+    /// </summary>
     public async Task RunAsync(Guid processId, CancellationToken ct)
     {
         var process = await _store.GetAsync(processId, ct)
             ?? throw new InvalidOperationException($"Vorgang {processId} nicht gefunden.");
+        if (process.State.IsTerminal())
+            return;
 
+        var run = new RunState();
+        await StepAsync(process, run, ct);
+        if (run.Published != process.State)
+            await TryPublishAsync(process, run, ct);
+    }
+
+    private async Task StepAsync(AnmeldeProcess process, RunState run, CancellationToken ct)
+    {
         for (var i = 0; i < MaxStepsPerRun; i++)
         {
             if (process.CancellationRequestedAt is not null && !process.State.IsTerminal())
             {
-                await CancelAsync(process, ct);
+                await CancelAsync(process, run, ct);
                 return;
             }
 
@@ -133,7 +148,7 @@ public sealed class ProcessEngine
             await _store.SaveAsync(process, ct);
 
             if (process.State != before)
-                await StateChangedAsync(process, before, ct);
+                await StateChangedAsync(process, before, run, ct);
 
             switch (result)
             {
@@ -142,18 +157,18 @@ public sealed class ProcessEngine
                     return;
                 case StepResult.HumanActionResult action:
                     await _tasks.CreateTaskAsync(process.CrmProjectId, action.TaskKey, action.Title, action.Body, ct);
-                    await _audit.RecordAsync(process, new AuditEvent("human-action", action.Title), ct);
+                    await _audit.RecordAsync(process, new AuditEvent("human-action", action.Title, AuditLevel.Info), ct);
                     return;
                 case StepResult.ContinueResult when process.State == before:
                     throw new InvalidOperationException($"Schritt {step.GetType().Name} meldet Continue ohne Zustandswechsel.");
             }
         }
 
-        throw new InvalidOperationException($"Vorgang {processId}: mehr als {MaxStepsPerRun} Schritte in einem Lauf.");
+        throw new InvalidOperationException($"Vorgang {process.Id}: mehr als {MaxStepsPerRun} Schritte in einem Lauf.");
     }
 
     /// <summary>Storno gilt aus jedem nicht-terminalen Zustand, auch aus Blocked.</summary>
-    private async Task CancelAsync(AnmeldeProcess process, CancellationToken ct)
+    private async Task CancelAsync(AnmeldeProcess process, RunState run, CancellationToken ct)
     {
         var before = process.State;
         // Sending zählt mit: ob der abgebrochene Versand angekommen ist, ist unklar.
@@ -165,7 +180,7 @@ public sealed class ProcessEngine
 
         process.TransitionTo(ProcessState.Cancelled, _time.GetUtcNow(), "Projekt storniert");
         await _store.SaveAsync(process, ct);
-        await StateChangedAsync(process, before, ct);
+        await StateChangedAsync(process, before, run, ct);
 
         if (submitted.Count > 0)
         {
@@ -173,14 +188,41 @@ public sealed class ProcessEngine
                 "Antrag beim Netzbetreiber zurückziehen",
                 $"Das Projekt wurde storniert. Bereits eingereicht: {string.Join(", ", submitted.Select(k => k.Label()))}. "
                 + "Bitte den Antrag beim Netzbetreiber zurückziehen.", ct);
-            await _audit.RecordAsync(process, new AuditEvent("human-action", "Antrag beim Netzbetreiber zurückziehen"), ct);
+            await _audit.RecordAsync(process, new AuditEvent("human-action", "Antrag beim Netzbetreiber zurückziehen", AuditLevel.Info), ct);
         }
     }
 
-    private async Task StateChangedAsync(AnmeldeProcess process, ProcessState before, CancellationToken ct)
+    /// <remarks>
+    /// Die Audit-Notiz ist nicht best effort: scheitert sie, bricht der Lauf ab und der Retry sieht keinen Wechsel mehr,
+    /// die Notiz fehlt dann (akzeptiert, Serilog hat den Eintrag). Der Status wird am Ende des Retry-Laufs nachgeholt.
+    /// </remarks>
+    private async Task StateChangedAsync(AnmeldeProcess process, ProcessState before, RunState run, CancellationToken ct)
     {
-        await _audit.RecordAsync(process, new AuditEvent("state-changed", $"{before} → {process.State}"), ct);
-        await _crmStatus.PublishAsync(process, ct);
+        await _audit.RecordAsync(process,
+            new AuditEvent("state-changed", $"{before} → {process.State}", AuditLevels.ForStateChange(process.State)), ct);
+        await TryPublishAsync(process, run, ct);
+    }
+
+    /// <summary>Status ins CRM, best effort: Fehler werden geloggt (nur Typ), der Lauf geht weiter; der nächste Lauf holt ihn nach.</summary>
+    private async Task TryPublishAsync(AnmeldeProcess process, RunState run, CancellationToken ct)
+    {
+        try
+        {
+            await _crmStatus.PublishAsync(process, ct);
+            run.Published = process.State;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            run.Published = null;
+            _logger.LogWarning("CRM-Status für Vorgang {ProcessId} in {State} fehlgeschlagen ({ExceptionType}), wird im nächsten Lauf nachgeholt",
+                process.Id, process.State, ex.GetType().Name);
+        }
+    }
+
+    /// <summary>Was in diesem Lauf zuletzt erfolgreich ins CRM gespiegelt wurde.</summary>
+    private sealed class RunState
+    {
+        public ProcessState? Published { get; set; }
     }
 }
 

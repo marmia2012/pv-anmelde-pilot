@@ -6,13 +6,18 @@
   },
 
   "HubSpot": {
-    "_comment": "Objekttyp der Projekte, Trigger-Stage und Property-Namen aus dem HubSpot-Portal von reinsolar.",
-    "ProjectObjectTypeId": "",
+    "_comment": "Objekttyp (Deal = 0-3), Trigger-Stage und Property-Namen aus dem HubSpot-Portal von reinsolar. Interne Namen und Optionswerte liefert GET /admin/hubspot/structure.",
+    "ObjectTypeId": "0-3",
+    "AuditLevel": "Info",
+    "DefaultTaskOwnerId": "",
+    "VollmachtFileNamePattern": "Vollmacht",
+    "_commentEinspeiseartValues": "Interner Optionswert der Einspeiseart-Property → Teileinspeisung | Volleinspeisung, z. B. { \"voll\": \"Volleinspeisung\", \"ueberschuss\": \"Teileinspeisung\" }. Leer am Deal = Teileinspeisung. Kein _comment im Objekt selbst (würde als Optionswert gelesen).",
+    "EinspeiseartValues": {},
     "TriggerRules": [
       {
-        "_comment": "Start: Projekt-Stage „Termine an Kunde gesendet & unterschriebene Vollmacht zurück“. Stage-ID aus der Projekt-Pipeline eintragen.",
+        "_comment": "Start: Deal-Stage „Termine an Kunde gesendet & unterschriebene Vollmacht zurück“. Stage-ID aus der Deal-Pipeline eintragen (GET /admin/hubspot/structure).",
         "Kind": "Start",
-        "PropertyName": "hs_pipeline_stage",
+        "PropertyName": "dealstage",
         "Values": []
       },
       {
@@ -84,13 +89,31 @@
         "Values": []
       },
       {
-        "_comment": "Storno: Stage-ID „storniert“ der Projekt-Pipeline eintragen. Ohne Values bleibt die Regel inaktiv.",
+        "_comment": "Storno: Stage-ID „storniert“ der Deal-Pipeline eintragen. Ohne Values bleibt die Regel inaktiv.",
         "Kind": "Cancelled",
-        "PropertyName": "hs_pipeline_stage",
+        "PropertyName": "dealstage",
         "Values": []
       }
     ],
     "Properties": {
+      "KundeAnrede": "",
+      "KundeVorname": "",
+      "KundeNachname": "",
+      "KundeEmail": "",
+      "KundeTelefon": "",
+      "KundeIban": "",
+      "KundeStrasse": "",
+      "KundeHausnummer": "",
+      "KundePlz": "",
+      "KundeOrt": "",
+      "KundeAdresse": "",
+      "BetreiberVorname": "",
+      "BetreiberNachname": "",
+      "AnlageStrasse": "",
+      "AnlageHausnummer": "",
+      "AnlagePlz": "",
+      "AnlageOrt": "",
+      "AnlageAdresse": "",
       "ReonicProjectId": "",
       "Einspeiseart": "",
       "NhSicherungAmpere": "",
@@ -110,6 +133,14 @@
       "MastrNummerAnlage": "",
       "MastrNummerSpeicher": ""
     }
+  },
+
+  "Errichter": {
+    "_comment": "Anlagenerrichter für alle Vorgänge (Installateurverzeichnis). Je Deal über HubSpot:Properties ErrichterFirma/-Ort/… überschreibbar.",
+    "Firma": "",
+    "Ort": "",
+    "Eintragungsnummer": "",
+    "EingetragenBeiNetzbetreiber": ""
   },
 
   "Reonic": {

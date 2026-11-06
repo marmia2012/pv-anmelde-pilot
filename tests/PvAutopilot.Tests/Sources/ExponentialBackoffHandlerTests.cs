@@ -1,5 +1,5 @@
 ﻿using System.Net;
-using PvAutopilot.Sources.Reonic;
+using PvAutopilot.Core.Http;
 
 namespace PvAutopilot.Tests.Sources;
 

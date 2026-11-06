@@ -40,6 +40,7 @@ public static class DependencyInjection
 
         services.AddScoped<IProcessStore, EfProcessStore>();
         services.AddScoped<ISubmissionLedger, EfSubmissionLedger>();
+        services.AddScoped<ICrmWriteLedger, EfCrmWriteLedger>();
         services.AddScoped<INetzbetreiberResolver, PlzNetzbetreiberResolver>();
         services.AddScoped<NetzbetreiberPlzImporter>();
         services.AddScoped<IProcessScheduler, HangfireProcessScheduler>();

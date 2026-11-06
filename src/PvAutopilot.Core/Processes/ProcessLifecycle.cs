@@ -146,8 +146,17 @@ public sealed class ProcessTriggerHandler(
 
         process.Resume(time.GetUtcNow());
         await store.SaveAsync(process, ct);
-        // Sonst bliebe „blockiert“ im CRM stehen, falls der nächste Lauf nur wartet.
-        await crmStatus.PublishAsync(process, ct);
+        // Sofort sichtbar machen, dass es weitergeht. Best effort: der eingeplante Lauf veröffentlicht den Stand ohnehin
+        // am Ende, ein HubSpot-Fehler darf das Einplanen nicht verhindern.
+        try
+        {
+            await crmStatus.PublishAsync(process, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            logger.LogWarning("Resume von Vorgang {ProcessId}: Status fehlgeschlagen ({ExceptionType}), wird im nächsten Lauf nachgeholt",
+                process.Id, ex.GetType().Name);
+        }
         scheduler.Enqueue(process.Id);
         return ResumeResult.Resumed;
     }
@@ -179,13 +188,32 @@ public sealed class ProcessFailureHandler(
         process.Block(reason, time.GetUtcNow());
         await store.SaveAsync(process, ct);
 
-        await audit.RecordAsync(process, new AuditEvent("blocked", error.GetType().Name), ct);
-        await crmStatus.PublishAsync(process, ct);
+        // Alarm zuerst, CRM best effort (Entscheidung Martin, 06.11.): Ist HubSpot selbst die Ursache, darf die Mail an
+        // den Betreiber nicht an einem HubSpot-Write scheitern. Der Vorgang bleibt in jedem Fall blockiert.
+        await BestEffortAsync("Alarm", process, LogLevel.Error, token => alert.SendAsync($"Vorgang {process.Id} blockiert", reason,
+            (error as AutomationException)?.Screenshot, token), ct);
+        await BestEffortAsync("Audit", process, LogLevel.Warning,
+            token => audit.RecordAsync(process, new AuditEvent("blocked", error.GetType().Name, AuditLevel.Error), token), ct);
+        // Scheitert der Status hier, holt ihn der nächste Lauf nach (ProcessEngine veröffentlicht am Ende jedes Laufs).
+        await BestEffortAsync("Status", process, LogLevel.Warning, token => crmStatus.PublishAsync(process, token), ct);
         // Zeitpunkt der Blockade im Schlüssel: eine erneute Blockade nach Resume bekommt einen neuen Task.
-        await tasks.CreateTaskAsync(process.CrmProjectId, $"blocked:{process.Id:N}:{TaskKeys.Stamp(process.StateChangedAt)}",
-            "Anmeldung blockiert", "Technischer Fehler – der Betreiber ist informiert.", ct);
-        await alert.SendAsync($"Vorgang {process.Id} blockiert", reason,
-            (error as AutomationException)?.Screenshot, ct);
+        await BestEffortAsync("Aufgabe", process, LogLevel.Warning, token => tasks.CreateTaskAsync(process.CrmProjectId,
+            $"blocked:{process.Id:N}:{TaskKeys.Stamp(process.StateChangedAt)}",
+            "Anmeldung blockiert", "Technischer Fehler – der Betreiber ist informiert.", token), ct);
+    }
+
+    /// <summary>Fehler werden nur geloggt (Typ, nie die Meldung: sie kann Antwortinhalte oder personenbezogene Daten enthalten).</summary>
+    private async Task BestEffortAsync(string writeType, AnmeldeProcess process, LogLevel level, Func<CancellationToken, Task> write, CancellationToken ct)
+    {
+        try
+        {
+            await write(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            logger.Log(level, "Blockade von Vorgang {ProcessId}: {WriteType} fehlgeschlagen ({ExceptionType}), Vorgang bleibt blockiert",
+                process.Id, writeType, ex.GetType().Name);
+        }
     }
 }
 

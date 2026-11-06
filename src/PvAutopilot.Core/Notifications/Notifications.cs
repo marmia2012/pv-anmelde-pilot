@@ -3,7 +3,7 @@ using PvAutopilot.Core.Submission;
 
 namespace PvAutopilot.Core.Notifications;
 
-/// <summary>Fachliche Aufgaben für Menschen (Instanz reinsolar: HubSpot-Task am Projekt).</summary>
+/// <summary>Fachliche Aufgaben für Menschen (Instanz reinsolar: HubSpot-Aufgabe am Deal).</summary>
 public interface IHumanTaskSink
 {
     /// <param name="taskKey">Stabiler Schlüssel; dieselbe Aufgabe wird nicht doppelt angelegt.</param>
@@ -16,7 +16,7 @@ public interface IOperatorAlert
     Task SendAsync(string subject, string body, byte[]? screenshot, CancellationToken ct);
 }
 
-/// <summary>Ablage erzeugter Dokumente am CRM-Projekt (Instanz reinsolar: HubSpot).</summary>
+/// <summary>Ablage erzeugter Dokumente am CRM-Objekt (Instanz reinsolar: HubSpot-Dateien + Notiz am Deal). Muss idempotent sein.</summary>
 public interface IDocumentArchive
 {
     Task StoreAsync(string crmProjectId, IReadOnlyList<GeneratedDocument> documents, CancellationToken ct);
@@ -31,7 +31,31 @@ public interface ICrmStatusSink
     Task PublishAsync(AnmeldeProcess process, CancellationToken ct);
 }
 
-public sealed record AuditEvent(string Type, string Message);
+/// <summary>Ein Eintrag im Audit-Log. <see cref="Level"/> entscheidet, ob ein Ziel ihn übernimmt (Serilog: immer).</summary>
+public sealed record AuditEvent(string Type, string Message, AuditLevel Level);
+
+/// <summary>
+/// Stufe eines Audit-Ereignisses bzw. Filter eines Audit-Ziels: <see cref="Verbose"/> = alles,
+/// <see cref="Info"/> = wichtige Ereignisse und Fehler, <see cref="Error"/> = nur Fehler.
+/// </summary>
+public enum AuditLevel { Verbose, Info, Error }
+
+/// <summary>Stufen der Audit-Ereignisse aus der Prozesssteuerung.</summary>
+public static class AuditLevels
+{
+    /// <summary>
+    /// Stufe eines Zustandswechsels nach <paramref name="to"/>: Blockade = <see cref="AuditLevel.Error"/>;
+    /// interne Zwischenschritte (Datenkarte, Netzbetreiber ermittelt, neue Revision) = <see cref="AuditLevel.Verbose"/>;
+    /// alle übrigen (Einreichung vorbereitet/eingereicht, Freigabe wartet, Zusage, Rückfrage, Inbetriebnahme,
+    /// Zählerwechsel, MaStR registriert, Abschluss, Storno) = <see cref="AuditLevel.Info"/>.
+    /// </summary>
+    public static AuditLevel ForStateChange(ProcessState to) => to switch
+    {
+        ProcessState.Blocked => AuditLevel.Error,
+        ProcessState.Created or ProcessState.DataCardAggregated or ProcessState.NetzbetreiberResolved => AuditLevel.Verbose,
+        _ => AuditLevel.Info,
+    };
+}
 
 /// <summary>Ein Ziel des Audit-Logs. Nachrichten dürfen keine personenbezogenen Daten enthalten.</summary>
 public interface IAuditSink

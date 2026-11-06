@@ -22,6 +22,25 @@ namespace PvAutopilot.Infrastructure.Persistence.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("PvAutopilot.Core.Notifications.CrmWriteRecord", b =>
+                {
+                    b.Property<string>("Key")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ExternalId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.HasKey("Key");
+
+                    b.ToTable("crm_writes", (string)null);
+                });
+
             modelBuilder.Entity("PvAutopilot.Core.Processes.AnmeldeProcess", b =>
                 {
                     b.Property<Guid>("Id")

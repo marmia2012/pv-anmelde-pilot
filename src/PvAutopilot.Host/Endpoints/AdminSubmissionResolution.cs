@@ -93,7 +93,7 @@ public static class AdminSubmissionResolution
         var label = submissionKind.Label();
         await audit.RecordAsync(process, new AuditEvent("submission-resolved", outcome == SubmissionStatus.Sent
             ? $"{label}: Versand manuell als angekommen bestätigt"
-            : $"{label}: Versand manuell als nicht angekommen gemeldet, wird erneut versendet"), ct);
+            : $"{label}: Versand manuell als nicht angekommen gemeldet, wird erneut versendet", AuditLevel.Info), ct);
 
         // Der eingeplante Lauf wartet auf das Lock, bis diese Anfrage es freigibt.
         var resumed = await handler.ResumeAsync(process.Id, ct) == ResumeResult.Resumed;

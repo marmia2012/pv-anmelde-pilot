@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using PvAutopilot.Core.DataCard;
+using PvAutopilot.Core.Notifications;
 using PvAutopilot.Core.Processes;
 using PvAutopilot.Core.Submission;
 
@@ -14,11 +15,21 @@ public sealed class AutopilotDbContext(DbContextOptions<AutopilotDbContext> opti
     public DbSet<AnmeldeProcess> Processes => Set<AnmeldeProcess>();
     public DbSet<SubmissionRecord> Submissions => Set<SubmissionRecord>();
     public DbSet<NetzbetreiberPlzEntry> NetzbetreiberPlz => Set<NetzbetreiberPlzEntry>();
+    public DbSet<CrmWriteRecord> CrmWrites => Set<CrmWriteRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureProcess(modelBuilder.Entity<AnmeldeProcess>());
         ConfigureSubmission(modelBuilder.Entity<SubmissionRecord>());
+
+        modelBuilder.Entity<CrmWriteRecord>(b =>
+        {
+            b.ToTable(EfCrmWriteLedger.Table);
+            b.HasKey(w => w.Key);
+            // Längster Schlüssel: Datei (~150 Zeichen: Präfix, Deal-ID, zwei Hashes).
+            b.Property(w => w.Key).HasMaxLength(200);
+            b.Property(w => w.ExternalId).HasMaxLength(64);
+        });
 
         modelBuilder.Entity<NetzbetreiberPlzEntry>(b =>
         {

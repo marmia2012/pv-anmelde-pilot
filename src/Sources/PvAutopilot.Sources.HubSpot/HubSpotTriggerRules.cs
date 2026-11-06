@@ -18,6 +18,14 @@ public sealed class HubSpotOptionsValidator : IValidateOptions<HubSpotOptions>
     public static IReadOnlyList<string> Errors(HubSpotOptions options)
     {
         var errors = new List<string>();
+        if (string.IsNullOrWhiteSpace(options.ObjectTypeId))
+            errors.Add("HubSpot:ObjectTypeId darf nicht leer sein (Deal: 0-3).");
+        if (string.IsNullOrWhiteSpace(options.TimeZone) || !TimeZoneInfo.TryFindSystemTimeZoneById(options.TimeZone.Trim(), out _))
+            errors.Add("HubSpot:TimeZone muss eine gültige IANA-Zeitzone sein (Default Europe/Berlin).");
+        if (!Enum.IsDefined(options.AuditLevel))
+            errors.Add("HubSpot:AuditLevel muss Verbose, Info oder Error sein.");
+        if (string.IsNullOrWhiteSpace(options.VollmachtFileNamePattern))
+            errors.Add("HubSpot:VollmachtFileNamePattern darf nicht leer sein, sonst gälte jedes PDF als EVU-Vollmacht.");
         if (!options.TriggerRules.Any(r => r.Kind == ProcessTriggerKind.Start && !string.IsNullOrWhiteSpace(r.PropertyName)))
             errors.Add("HubSpot:TriggerRules braucht mindestens eine Regel mit Kind=Start und PropertyName.");
 
@@ -36,6 +44,9 @@ public sealed class HubSpotOptionsValidator : IValidateOptions<HubSpotOptions>
     public static IReadOnlyList<string> Warnings(HubSpotOptions options)
     {
         var warnings = new List<string>();
+        if (!string.IsNullOrWhiteSpace(options.ProjectObjectTypeId))
+            warnings.Add("HubSpot:ProjectObjectTypeId ist veraltet und wird ignoriert; wirksam ist HubSpot:ObjectTypeId "
+                + $"({options.ObjectTypeId}). Schlüssel umbenennen bzw. entfernen.");
         for (var i = 0; i < options.TriggerRules.Count; i++)
         {
             var rule = options.TriggerRules[i];
@@ -48,12 +59,19 @@ public sealed class HubSpotOptionsValidator : IValidateOptions<HubSpotOptions>
     }
 }
 
-/// <summary>Meldet beim Start unvollständige Trigger-Regeln, damit ein fehlendes Ereignis nicht unbemerkt bleibt.</summary>
+/// <summary>
+/// Loggt beim Start die wirksame HubSpot-Konfiguration (ohne Secrets) und meldet unvollständige Trigger-Regeln,
+/// damit ein fehlendes Ereignis nicht unbemerkt bleibt.
+/// </summary>
 public sealed class HubSpotTriggerRulesStartupCheck(IOptions<HubSpotOptions> options, ILogger<HubSpotTriggerRulesStartupCheck> logger)
     : IHostedService
 {
     public Task StartAsync(CancellationToken ct)
     {
+        var o = options.Value;
+        logger.LogInformation("HubSpot: Objekttyp {ObjectTypeId}, WriteEnabled {WriteEnabled}, AuditLevel {AuditLevel}",
+            o.ObjectTypeId, o.WriteEnabled, o.AuditLevel);
+        logger.LogInformation("HubSpot: Zeitzone für Datum-Uhrzeit-Werte {TimeZone}", o.TimeZone);
         foreach (var warning in HubSpotOptionsValidator.Warnings(options.Value))
             logger.LogWarning("{TriggerRuleWarning}", warning);
         return Task.CompletedTask;
@@ -62,10 +80,18 @@ public sealed class HubSpotTriggerRulesStartupCheck(IOptions<HubSpotOptions> opt
     public Task StopAsync(CancellationToken ct) => Task.CompletedTask;
 }
 
-/// <summary>HubSpot liefert Datums-Properties als Epoch-Millisekunden (Mitternacht UTC) oder als <c>yyyy-MM-dd</c>.</summary>
+/// <summary>
+/// HubSpot liefert Datums-Properties als Epoch-Millisekunden (Mitternacht UTC) oder als <c>yyyy-MM-dd</c>,
+/// Datum-Uhrzeit-Properties als Epoch-Millisekunden mit Uhrzeit bzw. über die CRM-API als ISO 8601.
+/// Reine Datumswerte gelten als Kalendertag, wie sie sind. Werte mit Uhrzeit werden in die Instanz-Zeitzone
+/// (<see cref="HubSpotOptions.TimeZone"/>) umgerechnet und dann der Kalendertag genommen – sonst wäre ein Termin
+/// um 00:30 deutscher Zeit in UTC noch der Vortag.
+/// </summary>
 public static class HubSpotDate
 {
-    public static bool TryParse(string? value, out DateOnly date)
+    private const long MillisecondsPerDay = 24L * 60 * 60 * 1000;
+
+    public static bool TryParse(string? value, TimeZoneInfo timeZone, out DateOnly date)
     {
         date = default;
         if (string.IsNullOrWhiteSpace(value))
@@ -79,8 +105,9 @@ public static class HubSpotDate
         {
             try
             {
-                // Mitternacht UTC: der UTC-Kalendertag ist das gemeinte Datum.
-                date = DateOnly.FromDateTime(DateTimeOffset.FromUnixTimeMilliseconds(ms).UtcDateTime);
+                var instant = DateTimeOffset.FromUnixTimeMilliseconds(ms);
+                // Mitternacht UTC = reines Datum (Datums-Property): der UTC-Kalendertag ist gemeint.
+                date = ms % MillisecondsPerDay == 0 ? DateOnly.FromDateTime(instant.UtcDateTime) : LocalDay(instant, timeZone);
                 return true;
             }
             catch (ArgumentOutOfRangeException)
@@ -88,6 +115,17 @@ public static class HubSpotDate
                 return false;
             }
         }
+
+        // Datum-Uhrzeit als ISO 8601 (z. B. 2026-11-20T08:00:00.000Z); ohne Offset gilt UTC.
+        if (value.Contains('T') && DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var timestamp))
+        {
+            date = LocalDay(timestamp, timeZone);
+            return true;
+        }
         return false;
     }
+
+    private static DateOnly LocalDay(DateTimeOffset instant, TimeZoneInfo timeZone) =>
+        DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(instant, timeZone).DateTime);
 }

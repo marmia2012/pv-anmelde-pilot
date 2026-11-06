@@ -300,6 +300,8 @@ internal sealed class ProcessHarness
     public RecordingCrmStatus CrmStatus { get; } = new();
     public RecordingAudit Audit { get; } = new();
     public RecordingArchive Archive { get; } = new();
+    /// <summary>Ablage der Datenkarte, getrennt von <see cref="Archive"/> (Antragsunterlagen).</summary>
+    public RecordingArchive DataCardArchive { get; } = new();
     public FakeAdapter Adapter { get; } = new();
     public FakeMastrRegistrar Registrar { get; } = new();
     public FakeCredentialStore Credentials { get; } = new();
@@ -322,7 +324,7 @@ internal sealed class ProcessHarness
 
     public IReadOnlyList<IProcessStep> Steps() =>
     [
-        new AggregateDataCardStep(new NabDataCardAggregator(new FakeCrmSource(), Planning, new NoProductDocuments()), Time),
+        new AggregateDataCardStep(new NabDataCardAggregator(new FakeCrmSource(), Planning, new NoProductDocuments(), Options.Create(new ErrichterOptions())), DataCardArchive, Time),
         new ResolveNetzbetreiberStep(new FakeResolver(), [Adapter], Time),
         SubmissionStep(SubmissionStages.Netzanmeldung),
         new AwaitNetzbetreiberResponseStep(Time),
