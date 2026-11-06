@@ -1,6 +1,6 @@
 using System.Net;
 
-namespace PvAutopilot.Sources.Reonic;
+namespace PvAutopilot.Core.Http;
 
 /// <summary>
 /// Wiederholt Requests bei Rate-Limit (429) und Serverfehlern mit 2/4/8/16 s Wartezeit.

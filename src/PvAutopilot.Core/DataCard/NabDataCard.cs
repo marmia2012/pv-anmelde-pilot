@@ -92,9 +92,14 @@ public sealed record Wallbox(string Hersteller, string Modell, decimal LeistungK
 
 /// <summary>
 /// Verweis auf ein Dokument in einer Quelle (z. B. Reonic-Datei, SharePoint-Item, HubSpot-Datei).
-/// <see cref="Reference"/> kann eine signierte URL auf Kundenfotos sein und wird deshalb maskiert.
+/// <see cref="Reference"/> kann eine signierte URL auf Kundenfotos sein, <see cref="FileName"/> den Kundennamen enthalten
+/// (z. B. „Vollmacht Mustermann.pdf“); beide werden deshalb im Log maskiert.
 /// </summary>
-public sealed record DocumentRef(DocumentKind Kind, string Source, [property: PersonalData] string Reference, string FileName);
+public sealed record DocumentRef(
+    DocumentKind Kind,
+    string Source,
+    [property: PersonalData] string Reference,
+    [property: PersonalData] string FileName);
 
 public enum Einspeiseart { Teileinspeisung, Volleinspeisung }
 

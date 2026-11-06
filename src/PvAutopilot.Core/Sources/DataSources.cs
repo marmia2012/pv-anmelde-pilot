@@ -26,6 +26,8 @@ public sealed record CrmProjectData
     public string? PlanningProjectId { get; init; }
     public Person? Anlagenbetreiber { get; init; }
     public PostalAddress? Anlagenadresse { get; init; }
+
+    /// <summary>Abweichender Errichter am Vorgang; <c>null</c> = Errichter der Instanz (<see cref="ErrichterOptions"/>).</summary>
     public Anlagenerrichter? Errichter { get; init; }
     public Einspeiseart? Einspeiseart { get; init; }
     public int? NhSicherungAmpere { get; init; }
@@ -34,6 +36,12 @@ public sealed record CrmProjectData
     public bool? BestandsanlageVorhanden { get; init; }
     public DateOnly? Installationstermin { get; init; }
     public IReadOnlyList<DocumentRef> Dokumente { get; init; } = [];
+
+    /// <summary>
+    /// Fachliche Lücken, die nur die Quelle erkennen kann (z. B. Vorgang nicht gefunden, Adresse nicht zerlegbar,
+    /// unbekannter Auswahlwert). Ohne personenbezogene Daten – sie landen in HubSpot-Tasks und Logs.
+    /// </summary>
+    public IReadOnlyList<string> Problems { get; init; } = [];
 }
 
 /// <summary>Was die Planungssoftware liefert.</summary>

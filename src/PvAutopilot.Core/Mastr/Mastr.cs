@@ -8,10 +8,16 @@ public interface IMastrRegistrar
     Task<MastrRegistration> RegisterAsync(AnmeldeProcess process, MastrCredentials credentials, CancellationToken ct);
 }
 
-/// <summary>Kundenlogin für das MaStR-Webportal. Wird nach erfolgreicher Registrierung gelöscht.</summary>
+/// <summary>Kundenlogin für das MaStR-Webportal.</summary>
 public interface IMastrCredentialStore
 {
+    /// <returns><c>null</c>, wenn Benutzername oder Passwort fehlen.</returns>
     Task<MastrCredentials?> GetAsync(string crmProjectId, CancellationToken ct);
+
+    /// <summary>
+    /// Wird nach erfolgreicher Registrierung aufgerufen (idempotent). Ob tatsächlich gelöscht wird, entscheidet die
+    /// Implementierung: der HubSpot-Adapter löscht derzeit bewusst nicht (docs/konzept/hubspot-adapter.md).
+    /// </summary>
     Task DeleteAsync(string crmProjectId, CancellationToken ct);
 }
 

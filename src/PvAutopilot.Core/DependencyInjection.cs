@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using PvAutopilot.Core.DataCard;
@@ -10,9 +11,11 @@ namespace PvAutopilot.Core;
 
 public static class DependencyInjection
 {
-    public static IServiceCollection AddAutopilotCore(this IServiceCollection services)
+    public static IServiceCollection AddAutopilotCore(this IServiceCollection services, IConfiguration configuration)
     {
         services.TryAddSingleton(TimeProvider.System);
+        // Ohne Konfiguration kein Instanz-Errichter: der Aggregator meldet dann „Anlagenerrichter“ als fehlend.
+        services.AddOptions<ErrichterOptions>().Bind(configuration.GetSection(ErrichterOptions.SectionName));
         services.AddScoped<AuditLog>();
         services.AddScoped<NabDataCardAggregator>();
         services.AddScoped<SubmissionGate>();

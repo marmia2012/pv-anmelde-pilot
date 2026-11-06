@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Options;
 using PvAutopilot.Core.Sources;
 
 namespace PvAutopilot.Core.DataCard;
@@ -11,15 +12,16 @@ public sealed record DataCardAggregation(NabDataCard? Card, IReadOnlyList<string
 public sealed class NabDataCardAggregator(
     ICrmProjectSource crm,
     IPlanningDataSource planning,
-    IProductDocumentSource productDocuments)
+    IProductDocumentSource productDocuments,
+    IOptions<ErrichterOptions> errichterOptions)
 {
     public async Task<DataCardAggregation> AggregateAsync(string crmProjectId, CancellationToken ct)
     {
         var project = await crm.GetProjectAsync(crmProjectId, ct);
-        var missing = new List<string>();
+        var missing = new List<string>(project.Problems);
 
         if (project.PlanningProjectId is null)
-            return new DataCardAggregation(null, ["Reonic-Projekt-ID"]);
+            return new DataCardAggregation(null, [.. missing, "Reonic-Projekt-ID"]);
 
         var plan = await planning.GetPlanningDataAsync(project.PlanningProjectId, ct);
         missing.AddRange(plan.Problems);
@@ -30,12 +32,14 @@ public sealed class NabDataCardAggregator(
 
         if (project.Anlagenbetreiber is null) missing.Add("Anlagenbetreiber");
         if (project.Anlagenadresse is null) missing.Add("Anlagenadresse");
-        if (project.Errichter is null) missing.Add("Anlagenerrichter");
+        // Errichter: Override am Vorgang vor dem Errichter der Instanz.
+        var errichter = project.Errichter ?? errichterOptions.Value.ToErrichter();
+        if (errichter is null) missing.Add("Anlagenerrichter");
         if (plan.Module.Count == 0) missing.Add("Module");
         if (plan.Wechselrichter.Count == 0) missing.Add("Wechselrichter");
         if (plan.Hauptzaehlernummer is null) missing.Add("Hauptzählernummer");
 
-        if (project.Anlagenbetreiber is null || project.Anlagenadresse is null || project.Errichter is null)
+        if (project.Anlagenbetreiber is null || project.Anlagenadresse is null || errichter is null)
             return new DataCardAggregation(null, missing);
 
         var products = plan.Module.Select(m => (m.Hersteller, m.Modell))
@@ -53,7 +57,7 @@ public sealed class NabDataCardAggregator(
         {
             Anlagenbetreiber = project.Anlagenbetreiber,
             Anlagenadresse = project.Anlagenadresse,
-            Errichter = project.Errichter,
+            Errichter = errichter,
             Einspeiseart = project.Einspeiseart ?? Einspeiseart.Teileinspeisung,
             NhSicherungAmpere = project.NhSicherungAmpere ?? 63,
             Installationstermin = project.Installationstermin,

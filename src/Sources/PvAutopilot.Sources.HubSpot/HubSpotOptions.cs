@@ -1,3 +1,5 @@
+using PvAutopilot.Core.DataCard;
+using PvAutopilot.Core.Notifications;
 using PvAutopilot.Core.Processes;
 using PvAutopilot.Core.Submission;
 
@@ -19,14 +21,47 @@ public sealed class HubSpotOptions
     /// <summary>Client-Secret der App für die Webhook-Signatur v3, nur über Umgebungsvariable.</summary>
     public string ClientSecret { get; set; } = string.Empty;
 
-    /// <summary>Objekttyp-ID der Projekte.</summary>
-    public string ProjectObjectTypeId { get; set; } = string.Empty;
+    /// <summary>
+    /// Objekttyp-ID des CRM-Objekts, an dem der Vorgang hängt. Default <c>0-3</c> (Deal);
+    /// für HubSpot-Projekte z. B. <c>0-970</c> bzw. die ID eines Custom Objects.
+    /// </summary>
+    public string ObjectTypeId { get; set; } = "0-3";
+
+    /// <summary>
+    /// Schreibzugriffe (Aufgaben, Notizen, Dateien, Status) aktiv. Default <c>false</c>: es wird nur geloggt.
+    /// </summary>
+    public bool WriteEnabled { get; set; }
+
+    /// <summary>Welche Audit-Ereignisse als Notiz am Deal landen: <c>Verbose</c> (alles), <c>Info</c> (wichtige Ereignisse), <c>Error</c> (nur Fehler).</summary>
+    public AuditLevel AuditLevel { get; set; } = AuditLevel.Info;
+
+    /// <summary>HubSpot-Owner-ID für Aufgaben, wenn der Deal keinen Inhaber hat. Leer = Aufgabe ohne Zuweisung.</summary>
+    public string DefaultTaskOwnerId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Teil des Dateinamens, an dem die EVU-Vollmacht unter den PDF-Anhängen des Deals erkannt wird
+    /// (Groß-/Kleinschreibung egal).
+    /// </summary>
+    public string VollmachtFileNamePattern { get; set; } = "Vollmacht";
+
+    /// <summary>
+    /// Zuordnung der internen Optionswerte der Einspeiseart-Property zu <see cref="Einspeiseart"/>
+    /// (Groß-/Kleinschreibung egal). Leerer Wert am Deal = Default (Teileinspeisung), unbekannter Wert = fachliches Problem.
+    /// </summary>
+    public Dictionary<string, Einspeiseart> EinspeiseartValues { get; set; } = [];
 
     /// <summary>Welche Property-Änderung welches Ereignis auslöst (docs/konzept/prozesssteuerung.md).</summary>
     public List<HubSpotTriggerRule> TriggerRules { get; set; } = [];
 
-    /// <summary>Zuordnung fachlicher Feldnamen zu HubSpot-Property-Namen (z. B. <c>ReonicProjectId</c> → <c>reonic_projekt_id</c>).</summary>
+    /// <summary>
+    /// Zuordnung fachlicher Feldnamen (<see cref="HubSpotPropertyKeys"/>) zu HubSpot-Property-Namen
+    /// (z. B. <c>ReonicProjectId</c> → <c>reonic_projekt_id</c>). Leerer Name = Feld wird nicht gelesen.
+    /// </summary>
     public Dictionary<string, string> Properties { get; set; } = [];
+
+    /// <summary>Interner HubSpot-Name zum fachlichen Schlüssel; <c>null</c>, wenn nicht konfiguriert.</summary>
+    public string? PropertyName(string key) =>
+        Properties.TryGetValue(key, out var name) && !string.IsNullOrWhiteSpace(name) ? name.Trim() : null;
 }
 
 /// <summary>Eine Property-Änderung am Projekt, die ein Ereignis auslöst.</summary>

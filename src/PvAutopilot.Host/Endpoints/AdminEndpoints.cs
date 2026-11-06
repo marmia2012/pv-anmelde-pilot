@@ -5,6 +5,7 @@ using PvAutopilot.Core.Processes;
 using PvAutopilot.Core.Submission;
 using PvAutopilot.Infrastructure.Jobs;
 using PvAutopilot.Infrastructure.Persistence;
+using PvAutopilot.Sources.HubSpot;
 
 namespace PvAutopilot.Host.Endpoints;
 
@@ -32,7 +33,21 @@ public static class AdminEndpoints
             }
         });
 
-        admin.MapGet("/processes/{id:guid}", async (Guid id, IProcessStore store, CancellationToken ct) =>
+        // Pipelines/Stages und Properties des konfigurierten Objekttyps, um instance.json zu füllen. Nur Metadaten.
+        admin.MapGet("/hubspot/structure", async (HubSpotStructureReader reader, CancellationToken ct) =>
+        {
+            try
+            {
+                return Results.Ok(await reader.ReadAsync(ct));
+            }
+            catch (HttpRequestException ex)
+            {
+                // Message enthält nur Pfad und Status (HubSpotApiClient), keinen Antwort-Body.
+                return Results.Problem(ex.Message, statusCode: StatusCodes.Status502BadGateway);
+            }
+        });
+
+        admin.MapGet("/processes/{id:guid}",async (Guid id, IProcessStore store, CancellationToken ct) =>
             await store.GetAsync(id, ct) is { } p
                 ? Results.Ok(new
                 {

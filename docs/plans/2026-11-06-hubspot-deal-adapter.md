@@ -13,6 +13,7 @@ Der HubSpot-Adapter liest alle CRM-Daten für die NAB-Datenkarte vom Deal, finde
 | CRM-Objekt | **Deal** (`0-3`). Objekttyp bleibt konfigurierbar, falls reinsolar später HubSpot-Projekte nutzt |
 | Datenquelle | Alle Felder als Deal-Properties der NAB-Datenkarte; Property-Namen ausschließlich aus `HubSpot:Properties` |
 | Kunde / Betreiber / Anlagenort | Betreiber-Felder leer → Betreiber = Kunde. Anlagenort-Adresse leer → Kundenadresse |
+| Abweichender Anlagenbetreiber (06.11., Martin) | Vorerst **keine eigene Betreiber-Adresse**: auch bei abweichendem Betreiber gilt die Kundenadresse |
 | Errichter | Aus `instance.json` (Sektion `Errichter`), je Deal per Property überschreibbar |
 | Installationstermin | Der spätere von Termin Elektroinstallation und Termin Dachmontage |
 | Defaults | Einspeiseart = Teileinspeisung, NH-Sicherung = 63 A |
