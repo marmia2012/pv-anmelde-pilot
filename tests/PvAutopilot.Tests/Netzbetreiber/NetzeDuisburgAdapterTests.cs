@@ -13,7 +13,7 @@ public class NetzeDuisburgAdapterTests
     private static NetzeDuisburgAdapter Adapter(NetzeDuisburgChannelKind channel = NetzeDuisburgChannelKind.Mail) =>
         new(
             Options.Create(new NetzeDuisburgOptions { Channel = channel }), new NetzeDuisburgMailChannel(), new NetzeDuisburgPortalChannel(),
-            new NetzeDuisburgFormGenerator(NullLogger<NetzeDuisburgFormGenerator>.Instance), TimeProvider.System,
+            new NetzeDuisburgFormGenerator(NullLogger<NetzeDuisburgFormGenerator>.Instance),
             NullLogger<NetzeDuisburgAdapter>.Instance);
 
     [Fact]

@@ -46,7 +46,6 @@ public sealed class NetzeDuisburgAdapter(
     NetzeDuisburgMailChannel mailChannel,
     NetzeDuisburgPortalChannel portalChannel,
     NetzeDuisburgFormGenerator forms,
-    TimeProvider time,
     ILogger<NetzeDuisburgAdapter> logger) : INetzbetreiberAdapter
 {
     public const string NetzbetreiberCode = "netze-duisburg";
@@ -97,7 +96,7 @@ public sealed class NetzeDuisburgAdapter(
                     .Where(d => NetzanmeldungAttachments.Contains(d.Kind) || required.Contains(d.Kind))
                     .ToList();
                 var present = attachments.Select(a => a.Kind).ToHashSet();
-                documents.Add(forms.CreateE1(card, present, ProcessCalendar.Today(time)));
+                documents.Add(forms.CreateE1(card, present, Antragsdatum(process, SubmissionStages.Netzanmeldung.Ready)));
                 documents.Add(forms.CreateE2(card));
                 if (card.Speicher is not null)
                     documents.Add(forms.CreateE3(card, present));
@@ -109,9 +108,8 @@ public sealed class NetzeDuisburgAdapter(
                 var datum = process.Inbetriebnahmedatum
                     ?? throw new InvalidOperationException("Inbetriebnahmedatum fehlt für das E.8.");
                 documents.Add(forms.CreateE8(card, datum));
-                // Der Zählerantrag geht mit dem E.8 raus, ein Antrag je Zähler.
-                for (var i = 0; i < card.Zaehler.Count; i++)
-                    documents.Add(forms.CreateZaehlerantrag(card, card.Zaehler[i], i + 1));
+                // Der Zählerantrag geht mit dem E.8 raus: je gewechseltem Zähler ein Antrag, sonst eine Fertigmeldung.
+                documents.AddRange(forms.CreateZaehlerantraege(card));
                 attachments = [];
                 break;
 
@@ -148,13 +146,26 @@ public sealed class NetzeDuisburgAdapter(
         return problems;
     }
 
-    /// <summary>Zählerangaben für den Zählerantrag. Das Inbetriebnahmedatum sichert die Prozesssteuerung (InbetriebnahmeReady).</summary>
+    /// <summary>
+    /// Stabiles Antragsdatum für E.1 „Datum, Ort“: Eintritt der aktuellen Revision in den Bereit-Zustand der Stufe.
+    /// Gleich bei jedem erneuten Erzeugen (Retry, DryRun → Review, Resume); ein Resume zählt nicht als neuer Eintritt.
+    /// Ohne passenden Übergang (z. B. direkt angelegter Vorgang) gilt der Anlagezeitpunkt des Vorgangs.
+    /// </summary>
+    internal static DateOnly Antragsdatum(AnmeldeProcess process, ProcessState ready)
+    {
+        var transitions = process.Transitions.OrderBy(t => t.At).ToList();
+        var revisionStart = transitions.FindLastIndex(t => t.To == ProcessState.Created);
+        var entered = transitions.Skip(revisionStart + 1).FirstOrDefault(t => t.To == ready && t.From != ProcessState.Blocked);
+        return DateOnly.FromDateTime(ProcessCalendar.ToBerlin(entered?.At ?? process.CreatedAt).DateTime);
+    }
+
+    /// <summary>
+    /// Zählerangaben für den Zählerantrag. Ohne gewechselten Zähler entsteht eine Fertigmeldung – kein Problem.
+    /// Das Inbetriebnahmedatum sichert die Prozesssteuerung (InbetriebnahmeReady).
+    /// </summary>
     private static List<string> ValidateInbetriebnahme(NabDataCard card)
     {
         var problems = new List<string>();
-        if (card.Zaehler.Count == 0)
-            problems.Add("Keine Zähler erfasst (Zählerantrag).");
-
         for (var i = 0; i < card.Zaehler.Count; i++)
         {
             var zaehler = card.Zaehler[i];

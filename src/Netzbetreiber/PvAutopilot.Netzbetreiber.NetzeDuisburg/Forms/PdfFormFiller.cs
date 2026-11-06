@@ -11,8 +11,10 @@ namespace PvAutopilot.Netzbetreiber.NetzeDuisburg.Forms;
 /// Die Felder bleiben editierbar (kein Flatten); <c>NeedAppearances</c> lässt den Viewer die Darstellung erzeugen.
 /// </summary>
 /// <remarks>
-/// Werte werden direkt als <c>/V</c> bzw. <c>/AS</c> gesetzt, ohne Appearance-Streams zu rendern.
+/// Werte werden direkt als <c>/V</c> bzw. <c>/AS</c> gesetzt, ohne Appearance-Streams zu rendern; bei gesetzten
+/// Textfeldern wird die vorhandene (leere) Darstellung <c>/AP</c> entfernt, damit der Viewer neu zeichnet.
 /// Dadurch braucht PDFsharp keine Schriften (im Linux-Container gibt es keine Systemschriften).
+/// Texte länger als <c>/MaxLen</c> des Feldes werden gekürzt (<see cref="TruncatedCount"/>).
 /// Liegt im Duisburg-Projekt; Umzug in ein gemeinsames Projekt, sobald ein zweiter Netzbetreiber es braucht.
 /// </remarks>
 internal sealed class PdfFormFiller : IDisposable
@@ -23,6 +25,7 @@ internal sealed class PdfFormFiller : IDisposable
     private readonly PdfDocument _document;
     private readonly Dictionary<string, PdfDictionary> _fields;
     private readonly HashSet<string> _set = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _truncated = new(StringComparer.Ordinal);
 
     private PdfFormFiller(string formName, PdfDocument document)
     {
@@ -43,6 +46,9 @@ internal sealed class PdfFormFiller : IDisposable
     /// <summary>Felder, die leer geblieben sind – bewusst oder mangels Daten.</summary>
     public int EmptyCount => FieldCount - SetCount;
 
+    /// <summary>Textfelder, deren Wert auf <c>/MaxLen</c> der Vorlage gekürzt wurde.</summary>
+    public int TruncatedCount => _truncated.Count;
+
     public IReadOnlyCollection<string> FieldNames => _fields.Keys;
 
     public static PdfFormFiller Open(string formName, Stream template)
@@ -58,7 +64,17 @@ internal sealed class PdfFormFiller : IDisposable
         if (string.IsNullOrWhiteSpace(value))
             return;
 
-        field.Elements["/V"] = new PdfString(value.Trim(), PdfStringEncoding.Unicode);
+        var text = value.Trim();
+        if (Inherited(field, "/MaxLen") is PdfInteger { Value: > 0 } maxLen && text.Length > maxLen.Value)
+        {
+            text = text[..maxLen.Value];
+            _truncated.Add(name);
+        }
+
+        field.Elements["/V"] = new PdfString(text, PdfStringEncoding.Unicode);
+        // Vorhandene (leere) Darstellung entfernen, damit der Viewer das Feld mit dem neuen Wert zeichnet.
+        foreach (var widget in Widgets(field))
+            widget.Elements.Remove("/AP");
         _set.Add(name);
     }
 

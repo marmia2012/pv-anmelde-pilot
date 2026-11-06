@@ -10,13 +10,13 @@
 - Vorschlag Kundenformular: `docs/konzept/reonic-checkliste-vorschlag.md`, Abschnitt 5
 - Lageplan: Geobasis NRW WMS ALKIS als Quelle gefunden (dl-de/zero-2-0); TIM-online-API noch offen
 
-### Code (Stand 06.11., 348 Tests grün)
+### Code (Stand 06.11., 453 Tests grün)
 - Grundgerüst: .NET 10, Postgres/EF Core, Hangfire, Docker, Serilog mit Maskierung personenbezogener Daten, Instanz-Konfiguration (`docs/konfiguration.md`)
 - Prozesssteuerung komplett (`docs/konzept/prozesssteuerung.md`): alle Stufen von der Netzanmeldung bis MaStR, Ereignisse als Fakten, Modi DryRun/Review/Live, Versand-Ledger (nie doppelt), Watchdog, Blockiert/Storno, Admin-Endpunkte zum Simulieren von Ereignissen und zum Auflösen unklarer Versände
 - HubSpot-Webhook (Signatur v3) und konfigurierbare Trigger-Regeln
 - Reonic-Adapter: Hauptvariante, Katalog, Zählernummer, Checkliste, Backoff 2/4/8/16 s
 - Netzbetreiber-Ermittlung per PLZ-Tabelle
-- Netze-Duisburg-Adapter: Formulare E.1, E.2, E.3 (mit Speicher), E.8 und Zählerantrag (je Zähler) werden aus der Datenkarte gefüllt (PDFsharp 6.1.1, Felder editierbar), Antragspaket je Einreichungsart inkl. Anhängen, Prüfung Netzanmeldung + Inbetriebnahme, Pflichtanhänge konfigurierbar (`RequiredAttachments`). Mapping: `docs/konzept/netze-duisburg-adapter.md`. Versandkanal Mail/Portal austauschbar (noch Platzhalter)
+- Netze-Duisburg-Adapter: Formulare E.1, E.2, E.3 (mit Speicher), E.8 und Zählerantrag (je gewechseltem Zähler, sonst eine Fertigmeldung) werden aus der Datenkarte gefüllt (PDFsharp 6.1.1, Felder editierbar), Antragspaket je Einreichungsart inkl. Anhängen, Prüfung Netzanmeldung + Inbetriebnahme, Pflichtanhänge konfigurierbar (`RequiredAttachments`). Mapping: `docs/konzept/netze-duisburg-adapter.md`. Versandkanal Mail/Portal austauschbar (noch Platzhalter)
 
 ### Noch nicht umgesetzt (Platzhalter im Code)
 | Baustein | Hängt an |
@@ -34,6 +34,8 @@
 | Alarm-Mail an Martin (Graph) | Graph-Zugang |
 | Datenkarte zusätzlich in HubSpot ablegen | Schreibrechte |
 | Portal-Upload der Unterlagen Netze Duisburg | Entscheidung Portal oder Mail |
+| Kundenadresse in der Datenkarte (Anschlussnehmer, abweichender Betreiber, Anschlussnutzer; heute Anlagenadresse) | Merge des HubSpot-Branchs |
+| Wallbox > 4,2 kW → Mantelbogen Netze Duisburg | Klärung mit Michael |
 
 ## In Arbeit (Martin, bis 09.11. bzw. 15.11.)
 - [ ] **Netze Duisburg + MaStR bauen, Dry-Run auf Staging (bis 15.11.)**
@@ -42,6 +44,7 @@
 - [ ] Reonic-API gegen ein echtes Projekt testen (Requests in `reonic-checkliste-vorschlag.md`, Abschnitt 6.3)
 - [ ] Lageplan: TIM-online-API prüfen
 - [ ] E.8 Symmetrie und folgende Abschnitte klären
+- [ ] Darstellung der Duisburg-PDFs vor Go-live in macOS-Vorschau, Chrome und HubSpot-Vorschau prüfen (Felder ohne `/AP`, `NeedAppearances`); ggf. Appearances mit eingebetteter Schrift erzeugen
 - [ ] SharePoint-Ordnerstruktur je Produkt vorschlagen (oder Datenblätter aus dem Reonic-Katalog)
 - [ ] Kontakt HubSpot-Consultant an Michael weiterleiten
 
@@ -54,7 +57,7 @@
 - [ ] Schreibrechte in HubSpot freigeben
 - [ ] Martin als Member im OpenAI-Plattformzugang
 - [ ] Unterschrift als Bild
-- [ ] Annahmen Duisburg-Formulare bestätigen: MK 3 für „Kaskade“, „Drehstrom“ bei dreiphasigem WR (E.2), Kaskaden-Umbau als Zählerwechsel, „Eine Anlage kann in Betrieb gehen“ auch im Ausbau-Antrag, Anhänge zur Inbetriebnahme (`docs/konzept/netze-duisburg-adapter.md`, Abschnitt „Offen“)
+- [ ] Annahmen Duisburg-Formulare mit Michael klären (`docs/konzept/netze-duisburg-adapter.md`, Abschnitt „Offen“): MK 3 für „Kaskade“ und Bedeutung „Kaskaden-Umbau“ · „Drehstrom“ bei dreiphasigem WR (E.2) · Zählerantrag: MK-8-Zusatzzähler, Messeinrichtung bei MK 1/MK 3, Ausbau als „Zusammenlegung“, „Erweiterung“ bei Bestandsanlage · Wallbox-Mantelbogen (> 4,2 kW) · Inselbetrieb = ja auch ohne Speicher/Notstrom (E.2) · E.8 „Drosselung 70 %“ vs. E.3 „60 %“ · Anhänge zur Inbetriebnahme
 - [ ] Portal-Zugangsdaten in der Teams-Excel
 - [ ] HubSpot-Vertrag/Lizenz
 

@@ -40,8 +40,8 @@ public sealed class NetzeDuisburgFormGenerator(ILogger<NetzeDuisburgFormGenerato
 
     private const string MesskonzeptSonstiges = "Sonstiges (siehe Bemerkung)";
 
-    /// <summary>E.1 Antragstellung. <paramref name="attachments"/> steuert die Beilagen-Checkboxen.</summary>
-    public GeneratedDocument CreateE1(NabDataCard card, IReadOnlyCollection<DocumentKind> attachments, DateOnly today) =>
+    /// <summary>E.1 Antragstellung. <paramref name="attachments"/> steuert die Beilagen-Checkboxen, <paramref name="antragsdatum"/> ist ein stabiler Stichtag des Vorgangs.</summary>
+    public GeneratedDocument CreateE1(NabDataCard card, IReadOnlyCollection<DocumentKind> attachments, DateOnly antragsdatum) =>
         Fill(NetzeDuisburgForm.E1, form =>
         {
             var betreiber = card.Anlagenbetreiber;
@@ -77,7 +77,7 @@ public sealed class NetzeDuisburgFormGenerator(ILogger<NetzeDuisburgFormGenerato
             form.SetCheckBox(F.E1.SchaltplanBeigefuegt, attachments.Contains(DocumentKind.Schaltplan));
 
             form.SetText(F.E1.GeplanterInbetriebsetzungstermin, Date(card.Installationstermin));
-            form.SetText(F.E1.DatumOrt, $"{adresse.Ort}, {Date(today)}");
+            form.SetText(F.E1.DatumOrt, $"{adresse.Ort}, {Date(antragsdatum)}");
             // Unterschrift des Anschlussnehmers: bewusst leer (keine Unterschrift in diesem Feature).
         });
 
@@ -180,22 +180,40 @@ public sealed class NetzeDuisburgFormGenerator(ILogger<NetzeDuisburgFormGenerato
             // Unterschriften Anlagenbetreiber/-errichter, Ort/Datum: bewusst leer.
         });
 
-    /// <summary>Antrag auf Zählermontage – je Zähler ein Antrag (Vorgabe im Formular).</summary>
-    public GeneratedDocument CreateZaehlerantrag(NabDataCard card, Zaehler zaehler, int nummer) =>
+    /// <summary>
+    /// Alle Zähleranträge der Inbetriebnahme: je Zähler mit Wechsel (Tausch, Ausbau, Neusetzung, Kaskaden-Umbau) ein Antrag
+    /// (Vorgabe im Formular). Zähler ohne Wechsel bekommen keinen eigenen Antrag; wird gar kein Zähler gewechselt,
+    /// entsteht genau eine Fertigmeldung/Inbetriebsetzung für die Anlage.
+    /// </summary>
+    public IReadOnlyList<GeneratedDocument> CreateZaehlerantraege(NabDataCard card)
+    {
+        var gewechselt = card.Zaehler.Where(z => z.Wechseltyp != ZaehlerwechselTyp.KeinWechsel).ToList();
+        if (gewechselt.Count == 0)
+            return [CreateZaehlerantrag(card, null, 1)];
+        return gewechselt.Select((z, i) => CreateZaehlerantrag(card, z, i + 1)).ToList();
+    }
+
+    /// <summary>Ein Antrag auf Zählermontage. <paramref name="zaehler"/> <c>null</c> = Fertigmeldung der Anlage ohne Zählerwechsel.</summary>
+    public GeneratedDocument CreateZaehlerantrag(NabDataCard card, Zaehler? zaehler, int nummer) =>
         Fill(NetzeDuisburgForm.Zaehlerantrag, form =>
         {
-            var z = AuftragFor(zaehler.Wechseltyp);
+            var z = AuftragFor(zaehler?.Wechseltyp ?? ZaehlerwechselTyp.KeinWechsel);
             form.SetRadio(F.Zaehlerantrag.Auftrag, z.Auftrag);
             if (z.NummerFeld is { } nummerFeld)
-                form.SetText(nummerFeld, zaehler.Zaehlernummer);
+                form.SetText(nummerFeld, zaehler?.Zaehlernummer);
+            if (zaehler is null && !string.IsNullOrWhiteSpace(card.Hauptzaehlernummer))
+            {
+                // Fertigmeldung hat kein Feld für die Zählernummer; der Hauptzähler identifiziert den Anschluss.
+                form.SetText(F.Zaehlerantrag.BemerkungenInstallateur, $"Hauptzähler {card.Hauptzaehlernummer.Trim()}");
+            }
 
             var betreiber = card.Anlagenbetreiber;
             var adresse = card.Anlagenadresse;
             form.SetText(F.Zaehlerantrag.Grundstueckseigentuemer, Name(betreiber));
             form.SetText(F.Zaehlerantrag.StandortStrasse, Strasse(adresse));
             form.SetText(F.Zaehlerantrag.StandortPlzOrt, PlzOrt(adresse));
-            form.SetText(F.Zaehlerantrag.LageVerbrauchsstelle, Join(", ", zaehler.LageVerbrauchsstelle, zaehler.BezeichnungVerbrauchsstelle));
-            form.SetText(F.Zaehlerantrag.Einbauort, zaehler.Einbauort);
+            form.SetText(F.Zaehlerantrag.LageVerbrauchsstelle, Join(", ", zaehler?.LageVerbrauchsstelle, zaehler?.BezeichnungVerbrauchsstelle));
+            form.SetText(F.Zaehlerantrag.Einbauort, zaehler?.Einbauort);
 
             form.SetText(F.Zaehlerantrag.AnschlussnutzerName, Name(betreiber));
             form.SetText(F.Zaehlerantrag.AnschlussnutzerStrasse, Strasse(adresse));
@@ -203,7 +221,12 @@ public sealed class NetzeDuisburgFormGenerator(ILogger<NetzeDuisburgFormGenerato
             form.SetText(F.Zaehlerantrag.AnschlussnutzerEmail, betreiber.Email);
             form.SetText(F.Zaehlerantrag.AnschlussnutzerTelefon, betreiber.Telefon);
 
-            if (z.MitMesseinrichtung && zaehler.Bauform is { } bauform)
+            // MK 8: der neu gesetzte Zähler ist der Zusatzzähler der steuerbaren Verbrauchseinrichtung (§ 14a) –
+            // kein Zweirichtungszähler, keine Eigenerzeugung. Werte offen (mit Michael klären), deshalb leer.
+            var zusatzzaehlerMk8 = zaehler?.Wechseltyp == ZaehlerwechselTyp.Neusetzung && MesskonzeptNummer(card) == Mk8;
+            var erzeugung = !z.IstAusbau && !zusatzzaehlerMk8;
+
+            if (z.MitMesseinrichtung && !zusatzzaehlerMk8 && zaehler?.Bauform is { } bauform)
             {
                 form.SetRadio(F.Zaehlerantrag.Zaehler, bauform == Zaehlerbauform.Ehz
                     ? F.Zaehlerantrag.ZaehlerOption.EhzZweirichtung
@@ -211,16 +234,20 @@ public sealed class NetzeDuisburgFormGenerator(ILogger<NetzeDuisburgFormGenerato
             }
             form.SetRadio(F.Zaehlerantrag.Messebene, F.Zaehlerantrag.MessebeneOption.Niederspannung);
             form.SetText(F.Zaehlerantrag.SicherungHak, card.NhSicherungAmpere.ToString(German));
-            form.SetRadio(F.Zaehlerantrag.Massnahme, F.Zaehlerantrag.MassnahmeOption.AnlageKannInBetriebGehen);
-            form.SetRadio(F.Zaehlerantrag.Nutzungsart, F.Zaehlerantrag.NutzungsartOption.Eigenerzeugung);
-            form.SetText(F.Zaehlerantrag.EegPeakleistung, card.Module.Count > 0 ? Number(card.GesamtleistungKwp) : null);
+            form.SetRadio(F.Zaehlerantrag.Massnahme, MassnahmeFor(card, z));
+            if (erzeugung)
+            {
+                form.SetRadio(F.Zaehlerantrag.Nutzungsart, F.Zaehlerantrag.NutzungsartOption.Eigenerzeugung);
+                form.SetText(F.Zaehlerantrag.EegPeakleistung, card.Module.Count > 0 ? Number(card.GesamtleistungKwp) : null);
+            }
             // Installateur, Ort/Datum, Fachkraft, Unterschriften, Terminwunsch, Lieferant: bewusst leer.
         }, $"Zaehlerantrag_{nummer}.pdf");
 
     /// <param name="Auftrag">Export-Wert des Radios „Auftrag“.</param>
     /// <param name="NummerFeld">Feld für die Zählernummer, <c>null</c> = keine Nummer im Formular.</param>
     /// <param name="MitMesseinrichtung">Ein (neuer) Zähler wird gesetzt → gewünschte Messeinrichtung angeben.</param>
-    private sealed record ZaehlerAuftrag(string Auftrag, string? NummerFeld, bool MitMesseinrichtung);
+    /// <param name="IstAusbau">Zählerausbau: keine Nutzungsart, keine Peakleistung.</param>
+    private sealed record ZaehlerAuftrag(string Auftrag, string? NummerFeld, bool MitMesseinrichtung, bool IstAusbau = false);
 
     /// <summary>
     /// Wechseltyp der Datenkarte → Auftrag im Zählerantrag. Kaskaden-Umbau läuft als Zählerwechsel (Annahme,
@@ -230,10 +257,23 @@ public sealed class NetzeDuisburgFormGenerator(ILogger<NetzeDuisburgFormGenerato
     {
         ZaehlerwechselTyp.TauschZweirichtungszaehler or ZaehlerwechselTyp.UmbauKaskade =>
             new(F.Zaehlerantrag.AuftragOption.Zaehlerwechsel, F.Zaehlerantrag.ZaehlernummerWechsel, true),
-        ZaehlerwechselTyp.Ausbau => new(F.Zaehlerantrag.AuftragOption.Zaehlerausbau, F.Zaehlerantrag.ZaehlernummerAusbau, false),
+        ZaehlerwechselTyp.Ausbau => new(F.Zaehlerantrag.AuftragOption.Zaehlerausbau, F.Zaehlerantrag.ZaehlernummerAusbau, false, IstAusbau: true),
         ZaehlerwechselTyp.Neusetzung => new(F.Zaehlerantrag.AuftragOption.Zaehlereinbau, null, true),
         _ => new(F.Zaehlerantrag.AuftragOption.FertigmeldungInbetriebsetzung, null, false),
     };
+
+    /// <summary>
+    /// „Es handelt sich um“: Ausbau → Zusammenlegung, Erweiterung einer Bestandsanlage → Erweiterung,
+    /// sonst „Eine Anlage kann in Betrieb gehen“. Ausbau und Erweiterung sind Annahmen (mit Michael bestätigen).
+    /// </summary>
+    private static string MassnahmeFor(NabDataCard card, ZaehlerAuftrag auftrag)
+    {
+        if (auftrag.IstAusbau)
+            return F.Zaehlerantrag.MassnahmeOption.Zusammenlegung;
+        return card.Installationsart == Installationsart.Erweiterung
+            ? F.Zaehlerantrag.MassnahmeOption.Erweiterung
+            : F.Zaehlerantrag.MassnahmeOption.AnlageKannInBetriebGehen;
+    }
 
     private GeneratedDocument Fill(NetzeDuisburgForm kind, Action<PdfFormFiller> fill, string? fileName = null)
     {
@@ -242,8 +282,8 @@ public sealed class NetzeDuisburgFormGenerator(ILogger<NetzeDuisburgFormGenerato
         fill(form);
         var content = form.Save();
         logger.LogInformation(
-            "Formular erzeugt: {Formular}, {GesetzteFelder} Felder gesetzt, {LeereFelder} Felder leer",
-            kind, form.SetCount, form.EmptyCount);
+            "Formular erzeugt: {Formular}, {GesetzteFelder} Felder gesetzt, {LeereFelder} Felder leer, {GekuerzteFelder} Felder gekürzt",
+            kind, form.SetCount, form.EmptyCount, form.TruncatedCount);
         return new GeneratedDocument(fileName ?? NetzeDuisburgTemplates.FileName(kind), PdfContentType, content);
     }
 
@@ -279,6 +319,12 @@ public sealed class NetzeDuisburgFormGenerator(ILogger<NetzeDuisburgFormGenerato
             _ => null,
         } : null;
     }
+
+    private const string Mk8 = "MK 8";
+
+    /// <summary>Netze-Duisburg-Nummer des Messkonzepts (z. B. „MK 2“), <c>null</c> bei „Sonstiges“ oder unbekannt.</summary>
+    private static string? MesskonzeptNummer(NabDataCard card) =>
+        card.Messkonzept is { } m && Messkonzepte.TryGetValue(m.Trim(), out var nummer) ? nummer : null;
 
     private static string? MesskonzeptText(NabDataCard card)
     {

@@ -38,7 +38,7 @@ Der Netze-Duisburg-Adapter füllt die ausfüllbaren Formulare der Netzanmeldung 
 - Logging: Formular erzeugt (Formularname, Anzahl gesetzter/leerer Felder), nie Feldinhalte.
 
 ### 2. E.1 Antragstellung
-- Anlagenanschrift (Betreiber-Name + Anlagenadresse, Telefon/E-Mail), Anschlussnehmer/Eigentümer und Anlagenbetreiber (Betreiber; abweichender Betreiber nutzt vorerst die Kundenadresse), Errichter (Firma, Ort, Eintragungsnummer), Anlagenart (Neuerrichtung/Erweiterung), Beilagen-Checkboxen nach tatsächlich vorhandenen Anhängen, geplanter Inbetriebsetzungstermin (Installationstermin), Datum/Ort. Unterschrift leer.
+- Anlagenanschrift (Betreiber-Name + Anlagenadresse, Telefon/E-Mail), Anschlussnehmer/Eigentümer und Anlagenbetreiber (Betreiber; abweichender Betreiber nutzt vorerst die Anlagenadresse, weil die Datenkarte keine Kundenadresse hat – Kundenadresse folgt nach dem HubSpot-Merge), Errichter (Firma, Ort, Eintragungsnummer), Anlagenart (Neuerrichtung/Erweiterung), Beilagen-Checkboxen nach tatsächlich vorhandenen Anhängen, geplanter Inbetriebsetzungstermin (Installationstermin), Datum/Ort. Unterschrift leer.
 
 ### 3. E.2 Datenblatt Erzeugungsanlage
 - Anlagenanschrift, Energieart Sonne, Erzeugungseinheiten = Wechselrichter (Hersteller, Typ, Anzahl; mehrere WR-Typen → erster in die Felder, weitere in Bemerkungen), max. Wirkleistung = Summe WR-Leistung, Netzeinspeisung nach Phasen (falls im Katalog bekannt, sonst leer), Betriebsweise laut Dataflow (Inselbetrieb, motorischer Anlauf nein), Überschuss-/Volleinspeisung aus Einspeiseart, Blindleistungskompensation „nicht vorhanden“, Messkonzept in Bemerkungen. Scheinleistung leer.

@@ -72,7 +72,8 @@ public class NetzeDuisburgPackageTests
         Assert.True(PdfReadback.Of(withLageplan.Documents[0].Content).IsChecked(F.E1.LageplanBeigefuegt));
         Assert.True(PdfReadback.Of(withLageplan.Documents[0].Content).IsChecked(F.E1.SchaltplanBeigefuegt));
         Assert.False(PdfReadback.Of(without.Documents[0].Content).IsChecked(F.E1.LageplanBeigefuegt));
-        Assert.Equal("Duisburg, 06.11.2026", PdfReadback.Of(without.Documents[0].Content).Text(F.E1.DatumOrt));
+        // Stabiles Antragsdatum: ohne Übergang in den Bereit-Zustand gilt der Anlagezeitpunkt des Vorgangs (TestData.Now).
+        Assert.Equal("Duisburg, 03.11.2026", PdfReadback.Of(without.Documents[0].Content).Text(F.E1.DatumOrt));
     }
 
     [Fact]
@@ -268,11 +269,12 @@ public class NetzeDuisburgPackageTests
     }
 
     [Fact]
-    public void Inbetriebnahme_validation_requires_meters()
+    public void Inbetriebnahme_without_meter_change_is_valid()
     {
+        // Ohne gewechselten Zähler entsteht eine Fertigmeldung; kein fachliches Problem.
         var problems = Adapter().Validate(SubmissionKind.Inbetriebnahme, Card(zaehler: []));
 
-        Assert.Contains(problems, p => p.Contains("Keine Zähler"));
+        Assert.Empty(problems);
     }
 
     [Theory]

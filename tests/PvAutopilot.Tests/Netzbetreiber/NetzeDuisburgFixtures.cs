@@ -60,7 +60,7 @@ internal static class NetzeDuisburgFixtures
         ILogger<NetzeDuisburgFormGenerator>? formLogger = null,
         ILogger<NetzeDuisburgAdapter>? adapterLogger = null) =>
         new(Options.Create(options ?? new NetzeDuisburgOptions()), new NetzeDuisburgMailChannel(), new NetzeDuisburgPortalChannel(),
-            Generator(formLogger), new FixedTime(new DateTimeOffset(2026, 11, 6, 12, 0, 0, TimeSpan.Zero)),
+            Generator(formLogger),
             adapterLogger ?? NullLogger<NetzeDuisburgAdapter>.Instance);
 
     public static AnmeldeProcess Process(NabDataCard? card, DateOnly? inbetriebnahme = null)
@@ -167,4 +167,47 @@ internal sealed class CapturingLogger<T> : ILogger<T>
             text += " | " + string.Join(", ", pairs.Select(p => $"{p.Key}={p.Value}"));
         Entries.Add((logLevel, text));
     }
+}
+
+internal static class PdfAppearance
+{
+    /// <summary>Hat ein Feld (bzw. eines seiner Widgets) noch eine Darstellung /AP?</summary>
+    public static bool Has(byte[] pdf, string fieldName)
+    {
+        using var stream = new MemoryStream(pdf);
+        using var doc = PdfSharp.Pdf.IO.PdfReader.Open(stream, PdfSharp.Pdf.IO.PdfDocumentOpenMode.Import);
+        var acro = doc.Internals.Catalog.Elements.GetDictionary("/AcroForm")!;
+        foreach (var item in acro.Elements.GetArray("/Fields")!.Elements)
+        {
+            if (Find(Resolve(item)!, "", fieldName) is { } result)
+                return result;
+        }
+        throw new KeyNotFoundException(fieldName);
+    }
+
+    private static bool? Find(PdfSharp.Pdf.PdfDictionary node, string prefix, string target)
+    {
+        var partial = node.Elements.GetString("/T");
+        var name = string.IsNullOrEmpty(partial) ? prefix : prefix.Length == 0 ? partial : $"{prefix}.{partial}";
+        var kids = node.Elements.GetArray("/Kids")?.Elements.Select(Resolve).OfType<PdfSharp.Pdf.PdfDictionary>().ToList() ?? [];
+        var named = kids.Where(k => k.Elements.ContainsKey("/T")).ToList();
+        if (named.Count > 0)
+        {
+            foreach (var k in named)
+                if (Find(k, name, target) is { } r)
+                    return r;
+            return null;
+        }
+        if (name != target)
+            return null;
+        var widgets = kids.Count > 0 ? kids : [node];
+        return widgets.Any(w => w.Elements.ContainsKey("/AP"));
+    }
+
+    private static PdfSharp.Pdf.PdfDictionary? Resolve(PdfSharp.Pdf.PdfItem? item) => item switch
+    {
+        PdfSharp.Pdf.Advanced.PdfReference r => r.Value as PdfSharp.Pdf.PdfDictionary,
+        PdfSharp.Pdf.PdfDictionary d => d,
+        _ => null,
+    };
 }
