@@ -21,6 +21,12 @@ public interface INetzbetreiberAdapter
 
     ISubmissionChannel Channel { get; }
 
+    /// <summary>
+    /// Einreichungen, die dieser Netzbetreiber separat erwartet. Fehlt eine Art (z. B. Zählerwechsel bei
+    /// Netze Duisburg, der Zählerantrag geht mit dem E.8 raus), überspringt der Vorgang diese Stufe.
+    /// </summary>
+    IReadOnlySet<SubmissionKind> Einreichungen { get; }
+
     /// <summary>Fachliche Prüfung vor dem Erzeugen. Leere Liste = alles in Ordnung.</summary>
     IReadOnlyList<string> Validate(SubmissionKind kind, NabDataCard card);
 

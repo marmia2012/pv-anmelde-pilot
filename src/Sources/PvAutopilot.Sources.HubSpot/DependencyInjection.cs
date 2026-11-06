@@ -12,7 +12,9 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddHubSpot(this IServiceCollection services, IConfiguration configuration)
     {
-        services.AddOptions<HubSpotOptions>().Bind(configuration.GetSection(HubSpotOptions.SectionName));
+        services.AddOptions<HubSpotOptions>().Bind(configuration.GetSection(HubSpotOptions.SectionName)).ValidateOnStart();
+        services.AddSingleton<IValidateOptions<HubSpotOptions>, HubSpotOptionsValidator>();
+        services.AddHostedService<HubSpotTriggerRulesStartupCheck>();
         services.AddSingleton<HubSpotWebhookValidator>();
         services.AddSingleton<HubSpotTriggerEvaluator>();
 
@@ -20,6 +22,7 @@ public static class DependencyInjection
         services.AddHttpClient<IHumanTaskSink, HubSpotTaskSink>(Configure);
         services.AddHttpClient<IAuditSink, HubSpotAuditSink>(Configure);
         services.AddHttpClient<IDocumentArchive, HubSpotDocumentArchive>(Configure);
+        services.AddHttpClient<ICrmStatusSink, HubSpotStatusSink>(Configure);
         services.AddHttpClient<IMastrCredentialStore, HubSpotMastrCredentialStore>(Configure);
         return services;
     }

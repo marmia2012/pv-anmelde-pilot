@@ -42,9 +42,20 @@ public sealed class AutopilotDbContext(DbContextOptions<AutopilotDbContext> opti
         b.HasKey(p => p.Id);
         b.Property(p => p.CrmProjectId).HasMaxLength(64);
         b.HasIndex(p => p.CrmProjectId).IsUnique();
+        // Längster Zustandsname hat 28 Zeichen (InbetriebnahmeAwaitingReview); 40 lässt Luft.
         b.Property(p => p.State).HasConversion<string>().HasMaxLength(40);
+        // Für ListOpenAsync (Watchdog) und Auswertungen je Zustand.
+        b.HasIndex(p => p.State);
         b.Property(p => p.BlockedFrom).HasConversion<string>().HasMaxLength(40);
         b.Property(p => p.NetzbetreiberCode).HasMaxLength(64);
+        b.Property(p => p.ApprovedSubmission).HasConversion<string>().HasMaxLength(40);
+
+        // Fakten aus Ereignissen
+        b.Property(p => p.NetzbetreiberReferenz).HasMaxLength(200);
+        b.Property(p => p.RueckfrageErledigung).HasConversion<string>().HasMaxLength(40);
+        // MaStR-Nummern haben 15 Zeichen (z. B. SEE…); Puffer für Formatänderungen.
+        b.Property(p => p.MastrNummerAnlage).HasMaxLength(32);
+        b.Property(p => p.MastrNummerSpeicher).HasMaxLength(32);
         b.Property(p => p.DataCard)
             .HasColumnType("jsonb")
             .HasConversion(

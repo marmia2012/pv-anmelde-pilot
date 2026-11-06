@@ -38,6 +38,10 @@ public sealed class NetzeDuisburgAdapter(
 
     public string Code => NetzbetreiberCode;
 
+    /// <summary>Der Zähler-/Messantrag geht zusammen mit dem E.8 raus, deshalb keine eigene Zählerwechsel-Einreichung.</summary>
+    public IReadOnlySet<SubmissionKind> Einreichungen { get; } =
+        new HashSet<SubmissionKind> { SubmissionKind.Netzanmeldung, SubmissionKind.Inbetriebnahme };
+
     public ISubmissionChannel Channel => options.Value.Channel switch
     {
         NetzeDuisburgChannelKind.Portal => portalChannel,

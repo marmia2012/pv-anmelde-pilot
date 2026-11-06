@@ -28,12 +28,19 @@ namespace PvAutopilot.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<string>("ApprovedSubmission")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
                     b.Property<string>("BlockReason")
                         .HasColumnType("text");
 
                     b.Property<string>("BlockedFrom")
                         .HasMaxLength(40)
                         .HasColumnType("character varying(40)");
+
+                    b.Property<DateTimeOffset?>("CancellationRequestedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -46,17 +53,51 @@ namespace PvAutopilot.Infrastructure.Persistence.Migrations
                     b.Property<string>("DataCard")
                         .HasColumnType("jsonb");
 
+                    b.Property<DateOnly?>("EinspeisezusageDatum")
+                        .HasColumnType("date");
+
+                    b.Property<DateOnly?>("Inbetriebnahmedatum")
+                        .HasColumnType("date");
+
+                    b.Property<string>("MastrNummerAnlage")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("MastrNummerSpeicher")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
                     b.Property<string>("NetzbetreiberCode")
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
+                    b.Property<string>("NetzbetreiberReferenz")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
                     b.Property<DateTimeOffset?>("ReviewApprovedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("RueckfrageErledigung")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<DateTimeOffset?>("RueckfrageGeschlossenAm")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("RueckfrageOffenSeit")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("State")
                         .IsRequired()
                         .HasMaxLength(40)
                         .HasColumnType("character varying(40)");
+
+                    b.Property<DateTimeOffset>("StateChangedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -67,10 +108,15 @@ namespace PvAutopilot.Infrastructure.Persistence.Migrations
                         .HasColumnType("xid")
                         .HasColumnName("xmin");
 
+                    b.Property<DateOnly?>("ZaehlerwechselDatum")
+                        .HasColumnType("date");
+
                     b.HasKey("Id");
 
                     b.HasIndex("CrmProjectId")
                         .IsUnique();
+
+                    b.HasIndex("State");
 
                     b.ToTable("processes", (string)null);
                 });

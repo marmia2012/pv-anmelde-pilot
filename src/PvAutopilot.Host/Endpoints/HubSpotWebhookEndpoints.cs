@@ -33,10 +33,18 @@ public static class HubSpotWebhookEndpoints
                 return Results.BadRequest();
             }
 
+            // Immer 200, auch bei Ignored/NotFound: ein Fehlercode ließe HubSpot das Ereignis tagelang wiederholen,
+            // am Ergebnis würde das nichts ändern. Der Handler loggt ignorierte Ereignisse selbst.
+            var results = new List<TriggerResult>(triggers.Count);
             foreach (var trigger in triggers)
-                await handler.HandleAsync(trigger, ct);
+                results.Add(await handler.HandleAsync(trigger, ct));
 
-            return Results.Ok();
+            return Results.Ok(new
+            {
+                applied = results.Count(r => r == TriggerResult.Applied),
+                ignored = results.Count(r => r == TriggerResult.Ignored),
+                notFound = results.Count(r => r == TriggerResult.NotFound),
+            });
         });
     }
 }

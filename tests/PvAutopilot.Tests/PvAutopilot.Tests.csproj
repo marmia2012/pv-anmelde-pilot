@@ -9,6 +9,10 @@
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <!-- Gleiche EF-Version wie im Host (Microsoft.EntityFrameworkCore.Design hebt sie dort auf 10.0.14). -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.14" />
+    <!-- Nur für Ledger-Tests ohne Postgres (In-Memory-SQLite). -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.14" />
     <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.14" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
@@ -25,6 +29,7 @@
     <ProjectReference Include="..\..\src\Sources\PvAutopilot.Sources.Reonic\PvAutopilot.Sources.Reonic.csproj" />
     <ProjectReference Include="..\..\src\Netzbetreiber\PvAutopilot.Netzbetreiber.NetzeDuisburg\PvAutopilot.Netzbetreiber.NetzeDuisburg.csproj" />
     <ProjectReference Include="..\..\src\Sources\PvAutopilot.Sources.HubSpot\PvAutopilot.Sources.HubSpot.csproj" />
+    <ProjectReference Include="..\..\src\PvAutopilot.Host\PvAutopilot.Host.csproj" />
   </ItemGroup>
 
 </Project>

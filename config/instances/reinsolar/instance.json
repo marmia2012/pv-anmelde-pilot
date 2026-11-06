@@ -8,10 +8,88 @@
   "HubSpot": {
     "_comment": "Objekttyp der Projekte, Trigger-Stage und Property-Namen aus dem HubSpot-Portal von reinsolar.",
     "ProjectObjectTypeId": "",
-    "TriggerPropertyName": "hs_pipeline_stage",
-    "TriggerPropertyValues": [],
-    "ReviewApprovalPropertyName": "",
-    "ReviewApprovalPropertyValue": "true",
+    "TriggerRules": [
+      {
+        "_comment": "Start: Projekt-Stage „Termine an Kunde gesendet & unterschriebene Vollmacht zurück“. Stage-ID aus der Projekt-Pipeline eintragen.",
+        "Kind": "Start",
+        "PropertyName": "hs_pipeline_stage",
+        "Values": []
+      },
+      {
+        "_comment": "Freigaben im Modus Review: je Stufe eine eigene Property (Checkbox), damit eine stehengebliebene Freigabe nicht die nächste Stufe freigibt. HubSpot meldet nur Änderungen: eine noch gesetzte Checkbox erst zurücksetzen, dann neu setzen. Alternative (empfohlen): Datum-/Zeitstempel-Property mit leeren Values, dann löst jedes Setzen aus.",
+        "Kind": "ReviewApproved",
+        "Submission": "Netzanmeldung",
+        "PropertyName": "",
+        "Values": [ "true" ]
+      },
+      {
+        "Kind": "ReviewApproved",
+        "Submission": "Inbetriebnahme",
+        "PropertyName": "",
+        "Values": [ "true" ]
+      },
+      {
+        "Kind": "ReviewApproved",
+        "Submission": "Zaehlerwechsel",
+        "PropertyName": "",
+        "Values": [ "true" ]
+      },
+      {
+        "Kind": "ReviewApproved",
+        "Submission": "Mastr",
+        "PropertyName": "",
+        "Values": [ "true" ]
+      },
+      {
+        "_comment": "Datum der Einspeisezusage (Datums-Property). Values leer = jedes gültige Datum.",
+        "Kind": "EinspeisezusageReceived",
+        "PropertyName": "",
+        "IsDate": true
+      },
+      {
+        "_comment": "Rückfrage des Netzbetreibers eingegangen (Checkbox).",
+        "Kind": "RueckfrageReceived",
+        "PropertyName": "",
+        "Values": [ "true" ]
+      },
+      {
+        "_comment": "Rückfrage erledigt: eine Auswahl-Property mit zwei Optionen, je Option eine Regel. Interne Optionswerte eintragen.",
+        "Kind": "RueckfrageResolved",
+        "Resolution": "AnsweredDirectly",
+        "PropertyName": "",
+        "Values": [ "direkt_beantwortet" ]
+      },
+      {
+        "Kind": "RueckfrageResolved",
+        "Resolution": "Resubmit",
+        "PropertyName": "",
+        "Values": [ "neu_einreichen" ]
+      },
+      {
+        "_comment": "Inbetriebnahmedatum (Datums-Property).",
+        "Kind": "InbetriebnahmeReported",
+        "PropertyName": "",
+        "IsDate": true
+      },
+      {
+        "_comment": "Datum des Zählerwechsels (Datums-Property).",
+        "Kind": "ZaehlerwechselCompleted",
+        "PropertyName": "",
+        "IsDate": true
+      },
+      {
+        "_comment": "MaStR-Login aus dem Webformular liegt vor: z. B. die Benutzername-Property; jeder nicht-leere Wert löst einen Lauf aus.",
+        "Kind": "MastrCredentialsProvided",
+        "PropertyName": "",
+        "Values": []
+      },
+      {
+        "_comment": "Storno: Stage-ID „storniert“ der Projekt-Pipeline eintragen. Ohne Values bleibt die Regel inaktiv.",
+        "Kind": "Cancelled",
+        "PropertyName": "hs_pipeline_stage",
+        "Values": []
+      }
+    ],
     "Properties": {
       "ReonicProjectId": "",
       "Einspeiseart": "",
@@ -27,7 +105,10 @@
       "MastrBenutzername": "",
       "MastrPasswort": "",
       "Status": "",
-      "Fehlertext": ""
+      "Netzbetreiber": "",
+      "Fehlertext": "",
+      "MastrNummerAnlage": "",
+      "MastrNummerSpeicher": ""
     }
   },
 

@@ -1,6 +1,9 @@
 using System.Security.Cryptography;
 using System.Text;
+using PvAutopilot.Core.Notifications;
 using PvAutopilot.Core.Processes;
+using PvAutopilot.Core.Submission;
+using PvAutopilot.Infrastructure.Jobs;
 using PvAutopilot.Infrastructure.Persistence;
 
 namespace PvAutopilot.Host.Endpoints;
@@ -33,10 +36,26 @@ public static class AdminEndpoints
             await store.GetAsync(id, ct) is { } p
                 ? Results.Ok(new
                 {
-                    p.Id, p.CrmProjectId, State = p.State.ToString(), p.NetzbetreiberCode, p.BlockReason,
+                    p.Id, p.CrmProjectId, State = p.State.ToString(), p.StateChangedAt, p.Revision,
+                    p.NetzbetreiberCode, BlockedFrom = p.BlockedFrom?.ToString(), p.BlockReason,
+                    ApprovedSubmission = p.ApprovedSubmission?.ToString(), p.ReviewApprovedAt,
+                    // Fakten aus Ereignissen; bewusst ohne Datenkarte (personenbezogene Daten).
+                    p.NetzbetreiberReferenz, p.EinspeisezusageDatum, p.RueckfrageOffenSeit,
+                    RueckfrageErledigung = p.RueckfrageErledigung?.ToString(), p.RueckfrageGeschlossenAm,
+                    p.Inbetriebnahmedatum, p.ZaehlerwechselDatum, p.MastrNummerAnlage, p.MastrNummerSpeicher,
+                    p.CancellationRequestedAt, p.CreatedAt, p.UpdatedAt,
                     Transitions = p.Transitions.Select(t => new { From = t.From.ToString(), To = t.To.ToString(), t.At, t.Note }),
                 })
                 : Results.NotFound());
+
+        admin.MapPost("/processes/{id:guid}/events", (Guid id, HttpRequest request, IProcessStore store,
+                ProcessTriggerHandler handler, TimeProvider time, CancellationToken ct) =>
+            AdminProcessEvents.PostAsync(id, request.Body, store, handler, time, ct));
+
+        admin.MapPost("/processes/{id:guid}/submissions/{kind}/resolve", (Guid id, string kind, HttpRequest request,
+                IProcessStore store, ISubmissionLedger ledger, ProcessTriggerHandler handler, AuditLog audit, IProcessRunLock runLock,
+                CancellationToken ct) =>
+            AdminSubmissionResolution.PostAsync(id, kind, request.Body, store, ledger, handler, audit, runLock, ct));
 
         admin.MapPost("/processes/{id:guid}/resume", async (Guid id, ProcessTriggerHandler handler, CancellationToken ct) =>
             await handler.ResumeAsync(id, ct) switch

@@ -42,6 +42,8 @@ dotnet ef migrations add <Name> --project src/PvAutopilot.Infrastructure --start
 
 ## Konfiguration
 
+Vollständige Referenz aller Einstellungen und Umgebungsvariablen: [docs/konfiguration.md](docs/konfiguration.md).
+
 Jede Kundeninstanz hat einen eigenen Ordner unter `config/instances/<name>/`. Ladereihenfolge (spätere gewinnen):
 
 1. `appsettings.json`, `appsettings.<Umgebung>.json`: produktweite Defaults (DryRun, MaStR-Testsystem)
@@ -56,19 +58,65 @@ Wichtigste Variablen:
 | `Instance__Name`, `Instance__ConfigFile` | Instanz, z. B. `reinsolar` und `/app/config/instances/reinsolar/instance.json` |
 | `ConnectionStrings__Autopilot` | Postgres |
 | `Submission__Mode` | `DryRun` (Default) · `Review` · `Live` |
+| `Submission__ContinueAfterDryRun` | Nur Staging-Demo: nach einem DryRun weiterlaufen, als wäre versendet worden. Nur mit `Mode=DryRun` und nie in der Umgebung `Production` erlaubt (auch nicht per Umgebungsvariable), sonst startet der Host nicht. Staging: `true`, Produktion: immer `false` |
 | `HubSpot__AccessToken`, `HubSpot__ClientSecret` | Private App, Webhook-Signatur |
 | `Reonic__ApiKey` | v3-Key (`X-Authorization`) |
 | `Admin__ApiKey` | Header `X-Admin-Key` für `/admin/*` |
 | `Mastr__PortalUrl` | Default ist das MaStR-**Test**system |
 
+### HubSpot-Ereignisse (`HubSpot:TriggerRules`)
+
+Welche Property-Änderung am Projekt welches Ereignis auslöst, steht je Instanz in `instance.json` (Ablauf: [docs/konzept/prozesssteuerung.md](docs/konzept/prozesssteuerung.md)). Eine Regel:
+
+| Feld | Bedeutung |
+|---|---|
+| `Kind` | `Start`, `ReviewApproved`, `EinspeisezusageReceived`, `RueckfrageReceived`, `RueckfrageResolved`, `InbetriebnahmeReported`, `ZaehlerwechselCompleted`, `MastrCredentialsProvided`, `Cancelled` |
+| `PropertyName` | interner HubSpot-Name. Leer = Regel inaktiv (Warnung beim Start) |
+| `Values` | auslösende Werte (Groß-/Kleinschreibung egal). Leer = jeder nicht-leere Wert. `Start` und `Cancelled` brauchen Werte (Stage-IDs), sonst inaktiv |
+| `Submission` | Pflicht bei `ReviewApproved`: `Netzanmeldung`, `Inbetriebnahme`, `Zaehlerwechsel`, `Mastr` |
+| `Resolution` | Pflicht bei `RueckfrageResolved`: `AnsweredDirectly` oder `Resubmit` |
+| `IsDate` | Wert ist ein Datum (Epoch-Millisekunden oder `yyyy-MM-dd`). Ungültige Werte werden ignoriert und ohne Wert geloggt |
+
+Der Host startet nur mit mindestens einer `Start`-Regel mit `PropertyName`.
+
+**Wichtig für Freigabe und Rückfrage:** Wir lesen HubSpot nur und setzen keine Property zurück. HubSpot schickt einen Webhook nur, wenn sich ein Wert *ändert*. Steht eine Freigabe-Checkbox oder die Erledigungs-Auswahl einer Rückfrage noch von früher auf dem auslösenden Wert, muss sie erst zurückgesetzt und dann neu gesetzt werden (steht so auch im jeweiligen HubSpot-Task). Verspätete oder wiederholte alte Ereignisse erkennt der Kern am `occurredAt` des Webhooks und ignoriert sie. Empfehlung: Freigabe und Erledigung später als Datum-/Zeitstempel-Property mit leeren `Values` abbilden – dann ist jedes Setzen eine Änderung, Leeren löst nichts aus.
+
+### Watchdog (`Watchdog`)
+
+Täglicher Hangfire-Job `process-watchdog`: legt Tasks für überfällige Wartezustände an, plant hängengebliebene Vorgänge neu ein (vorbereitete Einreichungen nur außerhalb von DryRun, z. B. nach dem Wechsel auf Review/Live) und holt Vorgänge ab, deren Inbetriebnahmedatum erreicht ist. Die Defaults stehen in `ProcessWatchdogOptions` und müssen nicht konfiguriert werden. Überschreiben z. B. per Umgebungsvariable:
+
+| Variable | Default |
+|---|---|
+| `Watchdog__Schedule` | `0 7 * * 1-5` (Cron, UTC; 5 oder 6 Felder) |
+| `Watchdog__StalledAfter` | `01:00:00` |
+| `Watchdog__MaxWait__<Zustand>` | z. B. `Watchdog__MaxWait__RueckfrageOpen=5.00:00:00`; Fristen siehe Konzept |
+
+Ungültiger Cron oder Fristen ≤ 0 verhindern den Start.
+
+### Parallele Läufe
+
+Ein Vorgang läuft nie zweimal gleichzeitig: `ProcessJob` nimmt ein Postgres-Advisory-Lock je Vorgang. Ist es belegt, wartet der Lauf bis zu 30 s und plant sich sonst in einer Minute neu ein (kein Fehler, kein verbrauchter Retry).
+
 ## Admin-Endpunkte
 
 - `PUT /admin/netzbetreiber-plz`: CSV `plz;ort;netzbetreiber` (nur Semikolon) ersetzt die PLZ-Tabelle; eine leere Datei wird mit 400 abgelehnt
-- `GET /admin/processes/{id}`: Status und Verlauf eines Vorgangs (ohne personenbezogene Daten)
+- `GET /admin/processes/{id}`: Status, Fakten (Revision, Daten, Netzbetreiber-Referenz, MaStR-Nummern, Storno) und Verlauf eines Vorgangs (ohne personenbezogene Daten)
 - `POST /admin/processes/{id}/run`: Lauf anstoßen (404, wenn unbekannt)
 - `POST /admin/processes/{id}/resume`: blockierten Vorgang fortsetzen (404 unbekannt, 409 nicht blockiert)
+- `POST /admin/processes/{id}/submissions/{kind}/resolve`: unklaren Versand nach manueller Prüfung beim Netzbetreiber bzw. im MaStR klären. `kind` = `Netzanmeldung`, `Inbetriebnahme`, `Zaehlerwechsel` oder `Mastr`; maßgeblich ist die aktuelle Einreichung (bei der Netzanmeldung die aktuelle Revision). Body `{"outcome": "Sent", "reference": "NB-4711"}` (angekommen, `reference` optional; bei `Mastr` im Format `anlage=SEE…;speicher=SSE…`) oder `{"outcome": "NotSent"}` (nicht angekommen, der nächste Lauf versendet erneut). Nur für blockierte Vorgänge und nur, wenn gerade kein Lauf den Vorgang bearbeitet (Prozess-Lock) – sonst könnte ein laufender Versand doppelt ausgelöst werden. Danach wird der Vorgang fortgesetzt. Antwort 200, 409 Vorgang nicht blockiert, gerade in Bearbeitung oder Eintrag steht nicht auf „Versand läuft“ (`Sending`), 404 Vorgang oder Eintrag unbekannt, 400 ungültig. Schreibt einen Audit-Eintrag. Im Modus Review ist nach `NotSent` eine neue Freigabe nötig
+- `POST /admin/processes/{id}/events`: Ereignis festhalten, solange Postfach und HubSpot-Properties fehlen (und für Demos). Body z. B. `{"kind": "EinspeisezusageReceived", "date": "2026-11-12", "reference": "NB-4711"}`; weitere Felder `submission` (bei `ReviewApproved`) und `resolution` (bei `RueckfrageResolved`). Antwort 202 übernommen, 409 passt nicht zum Stand (z. B. Freigabe ohne wartende Stufe), 404 unbekannt, 400 ungültig. `Start` ist hier nicht erlaubt.
+
+Demo auf Staging (`Mode=DryRun`, `ContinueAfterDryRun=true`):
+
+```powershell
+$h = @{ "X-Admin-Key" = $env:ADMIN_KEY }
+$u = "https://<host>/admin/processes/<id>/events"
+Invoke-RestMethod $u -Method Post -Headers $h -ContentType application/json -Body '{"kind":"EinspeisezusageReceived","date":"2026-11-12"}'
+Invoke-RestMethod $u -Method Post -Headers $h -ContentType application/json -Body '{"kind":"InbetriebnahmeReported","date":"2026-12-01"}'
+Invoke-RestMethod $u -Method Post -Headers $h -ContentType application/json -Body '{"kind":"ZaehlerwechselCompleted","date":"2026-12-15"}'
+```
 
 ## Regeln
 
 - Keine personenbezogenen Daten in Logs. Felder sind mit `[PersonalData]` markiert und werden bei `{@Objekt}` maskiert. Einzelwerte nie direkt loggen, auch nicht in Exception-Messages.
-- Externe Einreichungen laufen nur über `SubmissionGate`. Ein abgebrochener Versand wird nie automatisch wiederholt, sondern blockiert und als Task gemeldet.
+- Externe Einreichungen laufen nur über `SubmissionGate`. Ein abgebrochener Versand wird nie automatisch wiederholt, sondern blockiert und als Task gemeldet. Weiter geht es erst, wenn ein Mensch das Ergebnis über `…/submissions/{kind}/resolve` meldet.

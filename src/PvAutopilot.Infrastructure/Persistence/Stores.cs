@@ -37,6 +37,11 @@ public sealed class EfProcessStore(AutopilotDbContext db, TimeProvider time) : I
     }
 
     public Task SaveAsync(AnmeldeProcess process, CancellationToken ct) => db.SaveChangesAsync(ct);
+
+    public async Task<IReadOnlyList<AnmeldeProcess>> ListOpenAsync(CancellationToken ct) =>
+        await db.Processes
+            .Where(p => p.State != ProcessState.Completed && p.State != ProcessState.Cancelled)
+            .ToListAsync(ct);
 }
 
 public sealed class EfSubmissionLedger(AutopilotDbContext db, TimeProvider time) : ISubmissionLedger
@@ -44,24 +49,37 @@ public sealed class EfSubmissionLedger(AutopilotDbContext db, TimeProvider time)
     public Task<SubmissionRecord?> FindAsync(string idempotencyKey, CancellationToken ct) =>
         db.Submissions.SingleOrDefaultAsync(s => s.IdempotencyKey == idempotencyKey, ct);
 
-    public async Task RecordDryRunAsync(ApplicationPackage package, string channel, CancellationToken ct)
+    public async Task<IReadOnlyList<SubmissionRecord>> ListByProcessAsync(Guid processId, CancellationToken ct) =>
+        await db.Submissions.Where(s => s.ProcessId == processId).ToListAsync(ct);
+
+    public async Task RecordDryRunAsync(SubmissionKey key, string channel, CancellationToken ct)
     {
-        var record = await FindAsync(package.IdempotencyKey, ct);
-        if (record is null)
-            db.Submissions.Add(NewRecord(package, channel, SubmissionStatus.DryRun));
-        else if (record.Status == SubmissionStatus.DryRun)
-            record.UpdatedAt = time.GetUtcNow();
-        else
-            throw new InvalidOperationException($"{package.IdempotencyKey} hat Status {record.Status}, DryRun nicht möglich.");
+        var record = await FindAsync(key.Value, ct);
+        switch (record?.Status)
+        {
+            case null:
+                db.Submissions.Add(NewRecord(key, channel, SubmissionStatus.DryRun));
+                break;
+            case SubmissionStatus.DryRun:
+                record.UpdatedAt = time.GetUtcNow();
+                break;
+            // Nachweislich nicht versendet (z. B. Rückschritt von Live auf DryRun): nichts zu tun, der Eintrag
+            // bleibt Failed und darf später wie ein DryRun-Eintrag reserviert werden.
+            case SubmissionStatus.Failed:
+                return;
+            // Sent/Sending prüft das Gate vorher; kommt es doch hier an, ist das ein Programmfehler.
+            default:
+                throw new InvalidOperationException($"{key.Value} hat Status {record.Status}, DryRun nicht möglich.");
+        }
         await db.SaveChangesAsync(ct);
     }
 
-    public async Task<bool> TryReserveAsync(ApplicationPackage package, string channel, CancellationToken ct)
+    public async Task<bool> TryReserveAsync(SubmissionKey key, string channel, CancellationToken ct)
     {
-        var record = await FindAsync(package.IdempotencyKey, ct);
+        var record = await FindAsync(key.Value, ct);
         if (record is null)
         {
-            record = NewRecord(package, channel, SubmissionStatus.Sending);
+            record = NewRecord(key, channel, SubmissionStatus.Sending);
             db.Submissions.Add(record);
         }
         else if (record.Status is SubmissionStatus.DryRun or SubmissionStatus.Failed)
@@ -92,11 +110,59 @@ public sealed class EfSubmissionLedger(AutopilotDbContext db, TimeProvider time)
         }
     }
 
-    public Task MarkSentAsync(string idempotencyKey, string? externalReference, CancellationToken ct) =>
-        SetStatusAsync(idempotencyKey, SubmissionStatus.Sent, externalReference, ct);
+    /// <summary>
+    /// Ein tatsächlicher Versand darf nie verloren gehen: Scheitert das Speichern an einem Konkurrenzkonflikt,
+    /// wird Sent ohne Versionsprüfung durchgesetzt und der Eintrag neu geladen.
+    /// </summary>
+    public async Task MarkSentAsync(string idempotencyKey, string? externalReference, CancellationToken ct)
+    {
+        try
+        {
+            await SetStatusAsync(idempotencyKey, SubmissionStatus.Sent, externalReference, ct);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            // Gespeichert wurde nichts (SaveChanges ist atomar). Ein paralleler Schreiber (z. B. ein manuelles
+            // Klären) darf den Versand nicht überschreiben: Sent gewinnt immer.
+            await db.Submissions
+                .Where(s => s.IdempotencyKey == idempotencyKey)
+                .ExecuteUpdateAsync(u => u
+                    .SetProperty(s => s.Status, SubmissionStatus.Sent)
+                    .SetProperty(s => s.ExternalReference, s => externalReference ?? s.ExternalReference)
+                    .SetProperty(s => s.UpdatedAt, time.GetUtcNow()), ct);
+            if (db.ChangeTracker.Entries<SubmissionRecord>().SingleOrDefault(e => e.Entity.IdempotencyKey == idempotencyKey) is { } entry)
+                await entry.ReloadAsync(ct);
+        }
+    }
 
     public Task MarkFailedAsync(string idempotencyKey, CancellationToken ct) =>
         SetStatusAsync(idempotencyKey, SubmissionStatus.Failed, null, ct);
+
+    public async Task<bool> ResolveSendingAsync(string idempotencyKey, SubmissionStatus outcome, string? externalReference, CancellationToken ct)
+    {
+        if (outcome is not (SubmissionStatus.Sent or SubmissionStatus.Failed))
+            throw new ArgumentOutOfRangeException(nameof(outcome), outcome, "Nur Sent oder Failed.");
+
+        var record = await FindAsync(idempotencyKey, ct);
+        if (record?.Status != SubmissionStatus.Sending)
+            return false;
+
+        record.Status = outcome;
+        if (outcome == SubmissionStatus.Sent)
+            record.ExternalReference = externalReference ?? record.ExternalReference;
+        record.UpdatedAt = time.GetUtcNow();
+        try
+        {
+            await db.SaveChangesAsync(ct);
+            return true;
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            // Ein Lauf hat den Eintrag parallel geändert; seine Entscheidung gilt.
+            db.Entry(record).State = EntityState.Detached;
+            return false;
+        }
+    }
 
     private async Task SetStatusAsync(string key, SubmissionStatus status, string? externalReference, CancellationToken ct)
     {
@@ -107,14 +173,14 @@ public sealed class EfSubmissionLedger(AutopilotDbContext db, TimeProvider time)
         await db.SaveChangesAsync(ct);
     }
 
-    private SubmissionRecord NewRecord(ApplicationPackage package, string channel, SubmissionStatus status)
+    private SubmissionRecord NewRecord(SubmissionKey key, string channel, SubmissionStatus status)
     {
         var now = time.GetUtcNow();
         return new SubmissionRecord
         {
-            IdempotencyKey = package.IdempotencyKey,
-            ProcessId = package.ProcessId,
-            Kind = package.Kind,
+            IdempotencyKey = key.Value,
+            ProcessId = key.ProcessId,
+            Kind = key.Kind,
             Channel = channel,
             Status = status,
             CreatedAt = now,

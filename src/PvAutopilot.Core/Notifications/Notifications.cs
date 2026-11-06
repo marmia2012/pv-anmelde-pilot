@@ -22,6 +22,15 @@ public interface IDocumentArchive
     Task StoreAsync(string crmProjectId, IReadOnlyList<GeneratedDocument> documents, CancellationToken ct);
 }
 
+/// <summary>
+/// Spiegelt den Stand eines Vorgangs ins CRM (Instanz reinsolar: Properties am HubSpot-Projekt):
+/// Status, Netzbetreiber, Blockadegrund, MaStR-Nummern. Wird nach jedem Zustandswechsel aufgerufen und muss idempotent sein.
+/// </summary>
+public interface ICrmStatusSink
+{
+    Task PublishAsync(AnmeldeProcess process, CancellationToken ct);
+}
+
 public sealed record AuditEvent(string Type, string Message);
 
 /// <summary>Ein Ziel des Audit-Logs. Nachrichten dürfen keine personenbezogenen Daten enthalten.</summary>

@@ -19,11 +19,18 @@ public static class DependencyInjection
         services.AddScoped<ProcessEngine>();
         services.AddScoped<ProcessTriggerHandler>();
         services.AddScoped<ProcessFailureHandler>();
+        services.AddScoped<ProcessWatchdog>();
 
+        // Je Zustand genau ein Schritt; ProcessEngine prüft das beim Erzeugen.
         services.AddScoped<IProcessStep, AggregateDataCardStep>();
         services.AddScoped<IProcessStep, ResolveNetzbetreiberStep>();
-        services.AddScoped<IProcessStep, SubmitNetzanmeldungStep>();
-        // TODO: Einspeisezusage (Mail-Eingang), Inbetriebnahme (E.8), Zählerwechsel, MaStR.
+        foreach (var stage in new[] { SubmissionStages.Netzanmeldung, SubmissionStages.Inbetriebnahme, SubmissionStages.Zaehlerwechsel })
+            services.AddScoped<IProcessStep>(sp => ActivatorUtilities.CreateInstance<NetzbetreiberSubmissionStep>(sp, stage));
+        services.AddScoped<IProcessStep, AwaitNetzbetreiberResponseStep>();
+        services.AddScoped<IProcessStep, AwaitInbetriebnahmeStep>();
+        services.AddScoped<IProcessStep, AwaitZaehlerwechselStep>();
+        services.AddScoped<IProcessStep, MastrRegistrationStep>();
+        services.AddScoped<IProcessStep, CompleteStep>();
 
         return services;
     }

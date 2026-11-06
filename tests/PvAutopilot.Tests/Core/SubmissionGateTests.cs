@@ -17,15 +17,16 @@ public class SubmissionGateTests
     public void Default_mode_is_DryRun()
     {
         Assert.Equal(SubmissionMode.DryRun, new SubmissionOptions().Mode);
+        Assert.False(new SubmissionOptions().ContinueAfterDryRun);
     }
 
     [Fact]
     public async Task DryRun_never_sends()
     {
-        var outcome = await Gate(SubmissionMode.DryRun).SubmitAsync(_package, _channel, reviewApproved: true, default);
+        var result = await Gate(SubmissionMode.DryRun).SubmitAsync(_package, _channel, reviewApproved: true, default);
 
-        Assert.Equal(SubmissionOutcome.DryRun, outcome);
-        Assert.Equal(0, _channel.Sent);
+        Assert.Equal(SubmissionOutcome.DryRun, result.Outcome);
+        Assert.Empty(_channel.Sent);
         Assert.Equal(SubmissionStatus.DryRun, _ledger.Records[_package.IdempotencyKey].Status);
     }
 
@@ -34,21 +35,24 @@ public class SubmissionGateTests
     {
         var gate = Gate(SubmissionMode.Review);
 
-        Assert.Equal(SubmissionOutcome.AwaitingReview, await gate.SubmitAsync(_package, _channel, false, default));
-        Assert.Equal(0, _channel.Sent);
+        Assert.Equal(SubmissionOutcome.AwaitingReview, (await gate.SubmitAsync(_package, _channel, false, default)).Outcome);
+        Assert.Empty(_channel.Sent);
 
-        Assert.Equal(SubmissionOutcome.Sent, await gate.SubmitAsync(_package, _channel, true, default));
-        Assert.Equal(1, _channel.Sent);
+        Assert.Equal(SubmissionOutcome.Sent, (await gate.SubmitAsync(_package, _channel, true, default)).Outcome);
+        Assert.Single(_channel.Sent);
     }
 
     [Fact]
-    public async Task Live_sends_exactly_once()
+    public async Task Live_sends_exactly_once_and_returns_reference_again()
     {
         var gate = Gate(SubmissionMode.Live);
 
-        Assert.Equal(SubmissionOutcome.Sent, await gate.SubmitAsync(_package, _channel, false, default));
-        Assert.Equal(SubmissionOutcome.AlreadySent, await gate.SubmitAsync(_package, _channel, false, default));
-        Assert.Equal(1, _channel.Sent);
+        var first = await gate.SubmitAsync(_package, _channel, false, default);
+        var second = await gate.SubmitAsync(_package, _channel, false, default);
+
+        Assert.Equal(new SubmissionResult(SubmissionOutcome.Sent, "NB-4711"), first);
+        Assert.Equal(new SubmissionResult(SubmissionOutcome.AlreadySent, "NB-4711"), second);
+        Assert.Single(_channel.Sent);
     }
 
     [Fact]
@@ -60,8 +64,8 @@ public class SubmissionGateTests
         await Assert.ThrowsAsync<HttpRequestException>(() => gate.SubmitAsync(_package, _channel, false, default));
         _channel.Failure = null;
 
-        Assert.Equal(SubmissionOutcome.Uncertain, await gate.SubmitAsync(_package, _channel, false, default));
-        Assert.Equal(0, _channel.Sent);
+        Assert.Equal(SubmissionOutcome.Uncertain, (await gate.SubmitAsync(_package, _channel, false, default)).Outcome);
+        Assert.Empty(_channel.Sent);
     }
 
     [Fact]
@@ -73,61 +77,20 @@ public class SubmissionGateTests
         await Assert.ThrowsAsync<SubmissionNotSentException>(() => gate.SubmitAsync(_package, _channel, false, default));
         _channel.Failure = null;
 
-        Assert.Equal(SubmissionOutcome.Sent, await gate.SubmitAsync(_package, _channel, false, default));
+        Assert.Equal(SubmissionOutcome.Sent, (await gate.SubmitAsync(_package, _channel, false, default)).Outcome);
     }
 
-    private sealed class FakeChannel : ISubmissionChannel
+    [Fact]
+    public async Task New_revision_has_its_own_idempotency_key()
     {
-        public int Sent { get; private set; }
-        public Exception? Failure { get; set; }
-        public string Name => "fake";
+        var gate = Gate(SubmissionMode.Live);
 
-        public Task<SubmissionReceipt> SendAsync(ApplicationPackage package, CancellationToken ct)
-        {
-            if (Failure is not null)
-                throw Failure;
-            Sent++;
-            return Task.FromResult(new SubmissionReceipt("ref-1"));
-        }
-    }
+        await gate.SubmitAsync(_package, _channel, false, default);
+        var resubmitted = await gate.SubmitAsync(_package with { Revision = 1 }, _channel, false, default);
 
-    private sealed class InMemoryLedger : ISubmissionLedger
-    {
-        public Dictionary<string, SubmissionRecord> Records { get; } = [];
-
-        public Task<SubmissionRecord?> FindAsync(string key, CancellationToken ct) =>
-            Task.FromResult(Records.GetValueOrDefault(key));
-
-        public Task RecordDryRunAsync(ApplicationPackage package, string channel, CancellationToken ct)
-        {
-            Records[package.IdempotencyKey] = New(package, channel, SubmissionStatus.DryRun);
-            return Task.CompletedTask;
-        }
-
-        public Task<bool> TryReserveAsync(ApplicationPackage package, string channel, CancellationToken ct)
-        {
-            if (Records.TryGetValue(package.IdempotencyKey, out var r) && r.Status is SubmissionStatus.Sending or SubmissionStatus.Sent)
-                return Task.FromResult(false);
-            Records[package.IdempotencyKey] = New(package, channel, SubmissionStatus.Sending);
-            return Task.FromResult(true);
-        }
-
-        public Task MarkSentAsync(string key, string? externalReference, CancellationToken ct)
-        {
-            Records[key].Status = SubmissionStatus.Sent;
-            Records[key].ExternalReference = externalReference;
-            return Task.CompletedTask;
-        }
-
-        public Task MarkFailedAsync(string key, CancellationToken ct)
-        {
-            Records[key].Status = SubmissionStatus.Failed;
-            return Task.CompletedTask;
-        }
-
-        private static SubmissionRecord New(ApplicationPackage p, string channel, SubmissionStatus status) => new()
-        {
-            IdempotencyKey = p.IdempotencyKey, ProcessId = p.ProcessId, Kind = p.Kind, Channel = channel, Status = status,
-        };
+        Assert.Equal(SubmissionOutcome.Sent, resubmitted.Outcome);
+        Assert.Equal(2, _channel.Sent.Count);
+        Assert.EndsWith(":Netzanmeldung:r1", (_package with { Revision = 1 }).IdempotencyKey);
+        Assert.EndsWith(":Netzanmeldung", _package.IdempotencyKey);
     }
 }

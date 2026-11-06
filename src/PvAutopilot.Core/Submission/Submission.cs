@@ -20,19 +20,36 @@ public sealed class SubmissionOptions
     public const string SectionName = "Submission";
 
     public SubmissionMode Mode { get; set; } = SubmissionMode.DryRun;
+
+    /// <summary>
+    /// Nur für Demos auf Staging: nach einem DryRun weiterlaufen, als wäre versendet worden,
+    /// damit sich die Folgeschritte simulieren lassen. In Produktion immer <c>false</c>.
+    /// </summary>
+    public bool ContinueAfterDryRun { get; set; }
 }
 
-public enum SubmissionKind { Netzanmeldung, Inbetriebnahme, Zaehlerwechsel }
+public enum SubmissionKind { Netzanmeldung, Inbetriebnahme, Zaehlerwechsel, Mastr }
+
+/// <summary>Identität einer Einreichung. Ein Vorgang reicht jede Art je Revision genau einmal ein.</summary>
+public sealed record SubmissionKey(Guid ProcessId, SubmissionKind Kind, int Revision = 0)
+{
+    /// <summary>Revision 0 ohne Suffix, damit bestehende Ledger-Einträge gültig bleiben.</summary>
+    public string Value => Revision == 0 ? $"{ProcessId:N}:{Kind}" : $"{ProcessId:N}:{Kind}:r{Revision}";
+
+    public override string ToString() => Value;
+}
 
 public sealed record ApplicationPackage(
     Guid ProcessId,
     SubmissionKind Kind,
     string NetzbetreiberCode,
     IReadOnlyList<GeneratedDocument> Documents,
-    IReadOnlyList<DocumentRef> Attachments)
+    IReadOnlyList<DocumentRef> Attachments,
+    int Revision = 0)
 {
-    /// <summary>Ein Vorgang reicht jede Antragsart genau einmal ein.</summary>
-    public string IdempotencyKey => $"{ProcessId:N}:{Kind}";
+    public SubmissionKey Key => new(ProcessId, Kind, Revision);
+
+    public string IdempotencyKey => Key.Value;
 }
 
 public sealed record GeneratedDocument(string FileName, string ContentType, byte[] Content);

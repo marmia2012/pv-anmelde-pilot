@@ -53,6 +53,27 @@ public sealed class HubSpotDocumentArchive(HttpClient http, ILogger<HubSpotDocum
     }
 }
 
+/// <summary>
+/// Spiegelt den Stand des Vorgangs ans HubSpot-Projekt. Bis Martin Schreibzugriffe freigibt, nur ein Log.
+/// </summary>
+public sealed class HubSpotStatusSink(HttpClient http, ILogger<HubSpotStatusSink> logger) : ICrmStatusSink
+{
+    public Task PublishAsync(AnmeldeProcess process, CancellationToken ct)
+    {
+        _ = http;
+        // TODO (erst nach Freigabe der Schreibrechte): PATCH crm/v3/objects/{ProjectObjectTypeId}/{CrmProjectId}
+        // mit den Property-Namen aus HubSpotOptions.Properties; leerer Name = Feld nicht schreiben:
+        //   Status              → process.State (bzw. lesbare Bezeichnung)
+        //   Netzbetreiber       → process.NetzbetreiberCode
+        //   Fehlertext          → process.BlockReason (bei Blocked, sonst leeren)
+        //   MastrNummerAnlage   → process.MastrNummerAnlage
+        //   MastrNummerSpeicher → process.MastrNummerSpeicher
+        // Idempotent, da nur der aktuelle Stand geschrieben wird.
+        logger.LogInformation("HubSpot-Status noch nicht angebunden: Vorgang {ProcessId} in {State}", process.Id, process.State);
+        return Task.CompletedTask;
+    }
+}
+
 public sealed class HubSpotMastrCredentialStore(HttpClient http) : IMastrCredentialStore
 {
     public Task<MastrCredentials?> GetAsync(string crmProjectId, CancellationToken ct)

@@ -12,7 +12,8 @@ public sealed class AggregateDataCardStep(NabDataCardAggregator aggregator, Time
         if (!result.IsComplete)
         {
             return StepResult.HumanAction(
-                $"datacard-missing:{process.Id:N}",
+                // Revision im Schlüssel: bei einer Neueinreichung nach Rückfrage entsteht ein neuer Task.
+                $"datacard-missing:{process.Id:N}:r{process.Revision}",
                 "Anmeldung: Daten unvollständig",
                 "Bitte ergänzen und den Vorgang erneut anstoßen: " + string.Join(", ", result.MissingFields));
         }

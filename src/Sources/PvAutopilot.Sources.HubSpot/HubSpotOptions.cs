@@ -1,3 +1,6 @@
+using PvAutopilot.Core.Processes;
+using PvAutopilot.Core.Submission;
+
 namespace PvAutopilot.Sources.HubSpot;
 
 /// <summary>
@@ -19,17 +22,41 @@ public sealed class HubSpotOptions
     /// <summary>Objekttyp-ID der Projekte.</summary>
     public string ProjectObjectTypeId { get; set; } = string.Empty;
 
-    /// <summary>Property, deren Änderung den Prozess startet (i. d. R. die Pipeline-Stage).</summary>
-    public string TriggerPropertyName { get; set; } = "hs_pipeline_stage";
-
-    /// <summary>Stage-ID(s) „Termine an Kunde gesendet &amp; unterschriebene Vollmacht zurück“.</summary>
-    public List<string> TriggerPropertyValues { get; set; } = [];
-
-    /// <summary>Property, mit der ein Mensch einen Antrag im Modus Review freigibt.</summary>
-    public string ReviewApprovalPropertyName { get; set; } = string.Empty;
-
-    public string ReviewApprovalPropertyValue { get; set; } = "true";
+    /// <summary>Welche Property-Änderung welches Ereignis auslöst (docs/konzept/prozesssteuerung.md).</summary>
+    public List<HubSpotTriggerRule> TriggerRules { get; set; } = [];
 
     /// <summary>Zuordnung fachlicher Feldnamen zu HubSpot-Property-Namen (z. B. <c>ReonicProjectId</c> → <c>reonic_projekt_id</c>).</summary>
     public Dictionary<string, string> Properties { get; set; } = [];
+}
+
+/// <summary>Eine Property-Änderung am Projekt, die ein Ereignis auslöst.</summary>
+public sealed class HubSpotTriggerRule
+{
+    public ProcessTriggerKind Kind { get; set; }
+
+    /// <summary>Interner HubSpot-Property-Name. Leer = Regel noch nicht konfiguriert, wird ignoriert.</summary>
+    public string PropertyName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Werte, die auslösen (z. B. Stage-IDs, <c>true</c>). Leer = jeder nicht-leere Wert;
+    /// für <see cref="ProcessTriggerKind.Start"/> und <see cref="ProcessTriggerKind.Cancelled"/> Pflicht.
+    /// </summary>
+    public List<string> Values { get; set; } = [];
+
+    /// <summary>Bei <see cref="ProcessTriggerKind.ReviewApproved"/>: welche Stufe freigegeben wird.</summary>
+    public SubmissionKind? Submission { get; set; }
+
+    /// <summary>Bei <see cref="ProcessTriggerKind.RueckfrageResolved"/>: wie die Rückfrage erledigt wurde.</summary>
+    public RueckfrageResolution? Resolution { get; set; }
+
+    /// <summary>Der Property-Wert ist ein Datum (Epoch-Millisekunden oder <c>yyyy-MM-dd</c>) und wird zu <see cref="ProcessTrigger.Date"/>.</summary>
+    public bool IsDate { get; set; }
+
+    /// <summary>
+    /// Bei Pipeline-Stages würde „jeder Wert“ bei jedem Stage-Wechsel auslösen. Start und Storno
+    /// brauchen deshalb explizite Werte; ohne sie bleibt die Regel inaktiv.
+    /// </summary>
+    internal bool RequiresValues => Kind is ProcessTriggerKind.Start or ProcessTriggerKind.Cancelled;
+
+    internal bool IsActive => !string.IsNullOrWhiteSpace(PropertyName) && (!RequiresValues || Values.Count > 0);
 }

@@ -9,8 +9,9 @@ Pilotkunde: reinsolar GmbH (Duisburg), Ansprechpartner Michael Roquet. Umfang V1
 > - `02-architektur.md` – verbindliche Architektur- und Technikentscheidungen
 > - `03-schnittstellen.md` – Rechercheergebnisse zu Netze Duisburg, MaStR, Reonic, Railway, VNB, Lageplan
 > - `04-dataflow-feldmapping.md` – Datenfluss, Datenquellen je Feld, Formular-Mapping Netze Duisburg (E.2/E.3/E.4/E.6/E.8)
-> - `05-status-offene-fragen.md` – aktueller Stand, To-dos, offene Fragen (Stand 03.11.2026)
+> - `05-status-offene-fragen.md` – aktueller Stand, To-dos, offene Fragen (Stand 06.11.2026)
 > - `meetings/` – Protokolle der Termine mit reinsolar
+> - `docs/konfiguration.md` – alle Einstellungen und Umgebungsvariablen: wo setzen, was sie bewirken
 
 ## Produktgrundsatz (wichtig für jede Code-Entscheidung)
 - **Wiederverwendbares Produkt, Single-Tenant-Instanz je Kunde.** reinsolar ist die erste Instanz; der Code soll für weitere Solarteure nutzbar sein.
@@ -40,6 +41,7 @@ Pilotkunde: reinsolar GmbH (Duisburg), Ansprechpartner Michael Roquet. Umfang V1
 - Externe Systeme ohne offizielle API (Netze-Duisburg-Portal, MaStR-Webportal, VNB Digital) hinter Adapter-Interfaces kapseln. Selektoren bzw. Endpunkte zentral halten.
 - Reonic-Rate-Limit: exponentielles Backoff (2/4/8/16 s).
 - Im Zweifel `DryRun` als Default, nie unbeabsichtigt live einreichen.
+- **Neue oder geänderte Konfiguration** (Options-Property, `Configuration["…"]`, Umgebungsvariable, Default, Startvalidierung) im selben Change in `docs/konfiguration.md` dokumentieren: Schlüssel, Ort (ENV / `instance.json` / `appsettings`), Default, Wirkung. Secrets und umgebungsabhängige Werte zusätzlich in `config/instances/<instanz>/.env.example` eintragen.
 
 ## Aktueller Fokus (bis 15.11.2026)
 Komplette Strecke **Netze Duisburg + MaStR** bauen, Dry-Run auf Staging. Duisburg live am 04.12.2026. Danach RheinNetz/ENNI + Westnetz (bis 15.12.), restliche Netzbetreiber im Januar 2027.

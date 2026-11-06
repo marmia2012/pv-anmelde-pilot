@@ -1,8 +1,9 @@
 ﻿using System.Security.Cryptography;
 using System.Text;
-using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging.Abstractions;
 using PvAutopilot.Sources.HubSpot;
 using PvAutopilot.Core.Processes;
+using PvAutopilot.Core.Submission;
 
 namespace PvAutopilot.Tests.Sources;
 
@@ -14,9 +15,15 @@ public class HubSpotWebhookTests
     private static readonly HubSpotOptions Options = new()
     {
         ClientSecret = Secret,
-        TriggerPropertyName = "hs_pipeline_stage",
-        TriggerPropertyValues = ["stage-vollmacht"],
-        ReviewApprovalPropertyName = "anmeldung_freigegeben",
+        TriggerRules =
+        [
+            new() { Kind = ProcessTriggerKind.Start, PropertyName = "hs_pipeline_stage", Values = ["stage-vollmacht"] },
+            new()
+            {
+                Kind = ProcessTriggerKind.ReviewApproved, Submission = SubmissionKind.Netzanmeldung,
+                PropertyName = "anmeldung_freigegeben", Values = ["true"],
+            },
+        ],
     };
 
     [Fact]
@@ -49,7 +56,8 @@ public class HubSpotWebhookTests
     [Fact]
     public void Evaluator_maps_stage_change_and_approval()
     {
-        var evaluator = new HubSpotTriggerEvaluator(Microsoft.Extensions.Options.Options.Create(Options));
+        var evaluator = new HubSpotTriggerEvaluator(Microsoft.Extensions.Options.Options.Create(Options),
+            NullLogger<HubSpotTriggerEvaluator>.Instance);
         const string body = """
             [
               {"objectId": 11, "propertyName": "hs_pipeline_stage", "propertyValue": "stage-vollmacht"},
@@ -62,7 +70,10 @@ public class HubSpotWebhookTests
         var triggers = evaluator.Evaluate(body);
 
         Assert.Equal(
-            [new ProcessTrigger(ProcessTriggerKind.Start, "11"), new ProcessTrigger(ProcessTriggerKind.ReviewApproved, "13")],
+            [
+                new ProcessTrigger(ProcessTriggerKind.Start, "11"),
+                new ProcessTrigger(ProcessTriggerKind.ReviewApproved, "13") { Submission = SubmissionKind.Netzanmeldung },
+            ],
             triggers);
     }
 

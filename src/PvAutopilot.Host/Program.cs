@@ -10,6 +10,7 @@ using PvAutopilot.Sources.SharePoint;
 using PvAutopilot.Core;
 using PvAutopilot.Host.Endpoints;
 using PvAutopilot.Infrastructure;
+using PvAutopilot.Infrastructure.Jobs;
 using PvAutopilot.Infrastructure.Logging;
 using PvAutopilot.Infrastructure.Persistence;
 using Serilog;
@@ -61,6 +62,7 @@ app.UseSerilogRequestLogging();
 
 await using (var scope = app.Services.CreateAsyncScope())
     await scope.ServiceProvider.GetRequiredService<AutopilotDbContext>().Database.MigrateAsync();
+app.Services.ScheduleRecurringJobs();
 
 if (app.Environment.IsDevelopment())
     app.MapHangfireDashboard("/hangfire");
