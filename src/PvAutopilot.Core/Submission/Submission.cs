@@ -52,7 +52,11 @@ public sealed record ApplicationPackage(
     public string IdempotencyKey => Key.Value;
 }
 
-public sealed record GeneratedDocument(string FileName, string ContentType, byte[] Content);
+/// <param name="ArchiveKey">
+/// Optional: stabiler Ablage-Schlüssel ohne personenbezogene Daten. Gesetzt legt das Archiv je Schlüssel genau eine Datei
+/// ab, auch wenn sich der Inhalt ändert (z. B. Datenkarte je Revision); leer = Name + Inhalts-Hash.
+/// </param>
+public sealed record GeneratedDocument(string FileName, string ContentType, byte[] Content, string? ArchiveKey = null);
 
 public sealed record SubmissionReceipt(string? ExternalReference);
 

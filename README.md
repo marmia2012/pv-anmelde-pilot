@@ -11,7 +11,7 @@ Die Adapter sind nach Art getrennt: **Quellsysteme** liefern Daten, **Netzbetrei
 | `src/PvAutopilot.Core` | Kern | Domäne und Prozesslogik: Vorgang + State-Machine, NAB-Datenkarte, Schritte, `SubmissionGate` (DryRun/Review/Live, kein Doppelversand), Schnittstellen für alle Adapter |
 | `src/PvAutopilot.Infrastructure` | Kern | EF Core/Postgres (Vorgänge, Versand-Ledger, PLZ-Tabelle), Hangfire-Job, PII-Maskierung für Serilog |
 | `src/PvAutopilot.Host` | Kern | ASP.NET Core: Webhook, Admin-Endpunkte, Hangfire-Server |
-| `src/Sources/PvAutopilot.Sources.HubSpot` | Quellsystem | CRM: Projektdaten, Webhooks (Signatur v3), Tasks, Audit, Dokumentablage |
+| `src/Sources/PvAutopilot.Sources.HubSpot` | Quellsystem | CRM (Deal): Daten der NAB-Datenkarte, EVU-Vollmacht, Webhooks (Signatur v3), Aufgaben, Audit-Notizen, Dokumentablage, Status (Schreiben nur mit `HubSpot__WriteEnabled`), siehe `docs/konzept/hubspot-adapter.md` |
 | `src/Sources/PvAutopilot.Sources.Reonic` | Quellsystem | Planungsdaten: Hauptvariante + Katalog, Zählernummer, Checkliste „Netzanmeldung“; Backoff 2/4/8/16 s |
 | `src/Sources/PvAutopilot.Sources.SharePoint` | Quellsystem | Zertifikate je Produkt |
 | `src/Netzbetreiber/PvAutopilot.Netzbetreiber.NetzeDuisburg` | Netzbetreiber | Unterlagen + Versandkanal Mail oder Portal per Konfiguration |
@@ -79,7 +79,7 @@ Welche Property-Änderung am Projekt welches Ereignis auslöst, steht je Instanz
 
 Der Host startet nur mit mindestens einer `Start`-Regel mit `PropertyName`.
 
-**Wichtig für Freigabe und Rückfrage:** Wir lesen HubSpot nur und setzen keine Property zurück. HubSpot schickt einen Webhook nur, wenn sich ein Wert *ändert*. Steht eine Freigabe-Checkbox oder die Erledigungs-Auswahl einer Rückfrage noch von früher auf dem auslösenden Wert, muss sie erst zurückgesetzt und dann neu gesetzt werden (steht so auch im jeweiligen HubSpot-Task). Verspätete oder wiederholte alte Ereignisse erkennt der Kern am `occurredAt` des Webhooks und ignoriert sie. Empfehlung: Freigabe und Erledigung später als Datum-/Zeitstempel-Property mit leeren `Values` abbilden – dann ist jedes Setzen eine Änderung, Leeren löst nichts aus.
+**Wichtig für Freigabe und Rückfrage:** Wir setzen keine Freigabe- oder Rückfrage-Property zurück. HubSpot schickt einen Webhook nur, wenn sich ein Wert *ändert*. Steht eine Freigabe-Checkbox oder die Erledigungs-Auswahl einer Rückfrage noch von früher auf dem auslösenden Wert, muss sie erst zurückgesetzt und dann neu gesetzt werden (steht so auch im jeweiligen HubSpot-Task). Verspätete oder wiederholte alte Ereignisse erkennt der Kern am `occurredAt` des Webhooks und ignoriert sie. Empfehlung: Freigabe und Erledigung später als Datum-/Zeitstempel-Property mit leeren `Values` abbilden – dann ist jedes Setzen eine Änderung, Leeren löst nichts aus.
 
 ### Watchdog (`Watchdog`)
 
@@ -100,6 +100,7 @@ Ein Vorgang läuft nie zweimal gleichzeitig: `ProcessJob` nimmt ein Postgres-Adv
 ## Admin-Endpunkte
 
 - `PUT /admin/netzbetreiber-plz`: CSV `plz;ort;netzbetreiber` (nur Semikolon) ersetzt die PLZ-Tabelle; eine leere Datei wird mit 400 abgelehnt
+- `GET /admin/hubspot/structure`: Pipelines (mit Stage-IDs) und Properties (interner Name, Label, Typ, Gruppe, Optionswerte) des Objekttyps `HubSpot:ObjectTypeId` – zum Füllen von `instance.json`. Nur Metadaten, keine Datensätze. 502, wenn HubSpot einen Fehler liefert (Meldung nur mit Pfad und Status)
 - `GET /admin/processes/{id}`: Status, Fakten (Revision, Daten, Netzbetreiber-Referenz, MaStR-Nummern, Storno) und Verlauf eines Vorgangs (ohne personenbezogene Daten)
 - `POST /admin/processes/{id}/run`: Lauf anstoßen (404, wenn unbekannt)
 - `POST /admin/processes/{id}/resume`: blockierten Vorgang fortsetzen (404 unbekannt, 409 nicht blockiert)

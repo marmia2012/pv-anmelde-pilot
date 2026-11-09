@@ -67,6 +67,11 @@ public sealed class AnmeldeProcess
 
     public DateTimeOffset CreatedAt { get; private set; }
     public DateTimeOffset UpdatedAt { get; private set; }
+    /// <summary>
+    /// Vollständige Historie aller Zustandswechsel, nur anhängend. Wird nie gekürzt oder umgeschrieben: der Schlüssel
+    /// der HubSpot-Audit-Notizen enthält <c>Transitions.Count</c> (<c>HubSpotAuditSink.Key</c>); eine gekürzte Liste
+    /// ergäbe alte Schlüssel erneut, und neue Notizen würden als Dublette verworfen.
+    /// </summary>
     public IReadOnlyList<ProcessTransition> Transitions => _transitions;
 
     public void TransitionTo(ProcessState target, DateTimeOffset now, string? note = null)
