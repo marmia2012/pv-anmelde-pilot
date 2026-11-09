@@ -82,9 +82,35 @@ Spalte **Start**: ✗ = Host startet ohne gültigen Wert nicht.
 | `HubSpot__AccessToken` | ENV | – | Token der Private App (Bearer) für die HubSpot-API | |
 | `HubSpot__ClientSecret` | ENV | – | Client-Secret der App, prüft die Webhook-Signatur v3. **Leer = jeder Webhook wird abgelehnt** | |
 | `HubSpot__BaseUrl` | APP | `https://api.hubapi.com/` | API-Basis-URL, nur für Tests ändern | |
-| `HubSpot:ProjectObjectTypeId` | INST | leer | Objekttyp-ID der Projekte (z. B. `2-12345678`). Webhooks anderer Objekttypen werden ignoriert; leer = keine Filterung | |
+| `HubSpot:ObjectTypeId` | INST | `0-3` (Deal) | Objekttyp-ID des CRM-Objekts, an dem der Vorgang hängt; aus ihm werden Properties, Anhänge, Pipelines gelesen, an ihm hängen Aufgaben, Notizen und der Status. Webhooks für andere Objekte werden ignoriert: akzeptiert werden `deal.propertyChange` (bei `0-3`; analog `contact`/`company`/`ticket` für `0-1`/`0-2`/`0-5`), `object.propertyChange` mit passendem `objectTypeId` und Ereignisse ohne `subscriptionType`. Ersetzt `ProjectObjectTypeId` | ✗ wenn leer |
+| `HubSpot:ProjectObjectTypeId` | – | – | **veraltet**, wird nicht ausgewertet. Ist der Schlüssel noch gesetzt, warnt das Start-Log (kein Abbruch); umbenennen in `ObjectTypeId` bzw. entfernen | |
+| `HubSpot:TimeZone` | INST / APP | `Europe/Berlin` | IANA-Zeitzone für Datum-Uhrzeit-Werte aus HubSpot (Termine am Deal, Datums-Trigger): ISO 8601 mit Uhrzeit und Epoch-ms ungleich Mitternacht UTC werden in diese Zone umgerechnet, dann zählt der Kalendertag. Reine Datumswerte (`yyyy-MM-dd`, Mitternacht UTC) bleiben unverändert. Start-Log zeigt den Wert | ✗ bei unbekannter Zone |
+| `HubSpot__WriteEnabled` | ENV | `false` | Schreibzugriffe nach HubSpot: Aufgaben, Audit-Notizen, Dateien + Ablage-Notiz, Status-PATCH am Deal. `false` = nichts wird geschrieben, nur ein Debug-Log je übersprungenem Write. Lesen (Deal, Vollmacht, MaStR-Login) ist davon unabhängig. Erst nach Freigabe durch Martin je Umgebung auf `true` | |
+| `HubSpot:AuditLevel` | INST | `Info` | welche Audit-Ereignisse als Notiz am Deal landen: `Verbose` (alles, auch interne Zwischenschritte), `Info` (wichtige Zustände, Aufgaben, Fehler), `Error` (nur Blockaden). Zuordnung der Stufen: [hubspot-adapter.md](konzept/hubspot-adapter.md#audit-stufen). Das technische Log (Serilog) enthält immer alle Ereignisse. Start-Log zeigt den Wert | ✗ bei ungültigem Wert |
+| `HubSpot:DefaultTaskOwnerId` | INST | leer | HubSpot-Owner-ID für Aufgaben, wenn der Deal keinen Inhaber (`hubspot_owner_id`) hat. Leer = Aufgabe ohne Zuweisung | |
+| `HubSpot:VollmachtFileNamePattern` | INST | `Vollmacht` | EVU-Vollmacht = neuester PDF-Anhang (Notizen und E-Mails am Deal), dessen Dateiname diesen Text enthält (Groß-/Kleinschreibung egal). Keiner gefunden → fachliches Problem | ✗ wenn leer |
+| `HubSpot:EinspeiseartValues` | INST | leer | interner Optionswert der Einspeiseart-Property → `Teileinspeisung` / `Volleinspeisung`, z. B. `{ "voll": "Volleinspeisung" }`. Leerer Wert am Deal = `Teileinspeisung`, unbekannter Wert = fachliches Problem | |
 | `HubSpot:TriggerRules` | INST | – | welche Property-Änderung welches Prozessereignis auslöst, siehe [Abschnitt 4](#4-hubspot-trigger-regeln-hubspottriggerrules) | ✗ |
 | `HubSpot:Properties` | INST | leer | Zuordnung fachlicher Feldname → interner HubSpot-Property-Name, siehe [Abschnitt 5](#5-hubspot-property-zuordnung-hubspotproperties). Leerer Name = Feld wird weder gelesen noch geschrieben | |
+
+Start-Log: `HubSpot: Objekttyp …, WriteEnabled …, AuditLevel …` und `Zeitzone …` (ohne Secrets).
+
+Struktur des Objekttyps (Pipelines mit Stage-IDs, Properties mit internen Namen und Optionswerten) liefert `GET /admin/hubspot/structure` mit Header `X-Admin-Key` – nur Metadaten, keine Datensätze. Damit `TriggerRules`, `Properties` und `EinspeiseartValues` füllen.
+
+Fest im Code (keine Einstellung): Ablageordner der Dateien `/pv-autopilot/<dealId>` (privat), Datenkarte als `nab-datenkarte-r<Revision>.json` (eine Datei je Vorgang und Revision, ohne `DocumentRef.Reference`). Ein dauerhaft abgelehnter Status-PATCH (4xx außer 429) löst einmal je Vorgang und Zustand einen Betreiber-Alarm aus. Idempotenz der Writes über die Tabelle `crm_writes` (Migration `CrmWrites`, läuft beim Start automatisch), siehe [hubspot-adapter.md](konzept/hubspot-adapter.md#idempotenz).
+
+Scopes der Private App: Deals, Notizen, E-Mails und Dateien lesen; mit `WriteEnabled` zusätzlich Deals, Aufgaben, Notizen und Dateien schreiben. Die genaue Scope-Liste kommt mit der Aktualisierung von Michaels Anleitung (Plan, „Annahmen und offene Punkte“).
+
+### Anlagenerrichter (`Errichter`)
+
+Errichter der Instanz für alle Vorgänge. Liefert der Deal einen eigenen Errichter (`HubSpot:Properties` `ErrichterFirma` gesetzt), hat dieser Vorrang. Ohne beide fehlt in der Datenkarte „Anlagenerrichter“ (fachliches Problem, kein Startabbruch).
+
+| Schlüssel | Wo | Default | Wirkung |
+|---|---|---|---|
+| `Errichter:Firma` | INST | leer | Firma des Elektro-Errichters. Leer = kein Instanz-Errichter |
+| `Errichter:Ort` | INST | leer | Ort des Errichters. Leer = kein Instanz-Errichter |
+| `Errichter:Eintragungsnummer` | INST | leer | Eintragungsnummer im Installateurverzeichnis |
+| `Errichter:EingetragenBeiNetzbetreiber` | INST | leer | Netzbetreiber, bei dem der Errichter eingetragen ist |
 
 ### Reonic (`Reonic`)
 
@@ -153,7 +179,7 @@ Stehen bereits auskommentiert in der `.env.example` und werden mit den jeweilige
 
 ## 4. HubSpot-Trigger-Regeln (`HubSpot:TriggerRules`)
 
-In `instance.json`. Jede Regel übersetzt eine Property-Änderung am HubSpot-Projekt in ein Prozessereignis (Ablauf: [docs/konzept/prozesssteuerung.md](konzept/prozesssteuerung.md)).
+In `instance.json`. Jede Regel übersetzt eine Property-Änderung am HubSpot-Deal (Objekttyp `HubSpot:ObjectTypeId`) in ein Prozessereignis (Ablauf: [docs/konzept/prozesssteuerung.md](konzept/prozesssteuerung.md)).
 
 | Feld | Bedeutung |
 |---|---|
@@ -170,31 +196,37 @@ Was für reinsolar einzutragen ist:
 
 | Regel | Was eintragen |
 |---|---|
-| `Start` | Stage-ID „Termine an Kunde gesendet & unterschriebene Vollmacht zurück“ der Projekt-Pipeline (`hs_pipeline_stage`) |
+| `Start` | `PropertyName` `dealstage`, Stage-ID „Termine an Kunde gesendet & unterschriebene Vollmacht zurück“ der Deal-Pipeline |
 | `ReviewApproved` (je Stufe) | je Stufe eine eigene Checkbox- oder (empfohlen) Zeitstempel-Property |
 | `EinspeisezusageReceived`, `InbetriebnahmeReported`, `ZaehlerwechselCompleted` | jeweilige Datums-Property |
 | `RueckfrageReceived` | Checkbox „Rückfrage eingegangen“ |
 | `RueckfrageResolved` | Auswahl-Property mit zwei Optionen; interne Optionswerte (`direkt_beantwortet`, `neu_einreichen`) |
 | `MastrCredentialsProvided` | z. B. die MaStR-Benutzername-Property |
-| `Cancelled` | Stage-ID „storniert“ |
+| `Cancelled` | `PropertyName` `dealstage`, Stage-ID „storniert“ der Deal-Pipeline |
 
 **Achtung:** HubSpot schickt einen Webhook nur, wenn sich ein Wert *ändert*, und wir setzen keine Property zurück. Eine noch gesetzte Checkbox muss erst geleert und dann neu gesetzt werden. Datum-/Zeitstempel-Properties mit leeren `Values` vermeiden das.
 
 ## 5. HubSpot-Property-Zuordnung (`HubSpot:Properties`)
 
-In `instance.json`: fachlicher Schlüssel → interner HubSpot-Property-Name des Kundenportals. Wird beim Aufbau der NAB-Datenkarte gelesen bzw. (nach Freigabe der Schreibrechte) geschrieben. Stand 04.11.2026: Lesen und Schreiben sind im HubSpot-Adapter noch nicht umgesetzt, die Schlüssel stehen aber fest.
+In `instance.json`: fachlicher Schlüssel → interner HubSpot-Property-Name des Kundenportals (am Objekt `HubSpot:ObjectTypeId`, für reinsolar der Deal). Wird beim Aufbau der NAB-Datenkarte gelesen bzw. (nach Freigabe der Schreibrechte) geschrieben. Leerer Name = Feld wird nicht abgefragt bzw. nicht geschrieben. Stand 06.11.2026: Lesen und Schreiben sind umgesetzt (`HubSpotCrmProjectSource`, `HubSpotServices.cs`); geschrieben wird nur mit `HubSpot__WriteEnabled=true`.
 
 | Schlüssel | Richtung | Inhalt |
 |---|---|---|
+| `KundeAnrede`, `KundeVorname`, `KundeNachname`, `KundeEmail`, `KundeTelefon`, `KundeIban` | lesen | Kunde; ist zugleich Anlagenbetreiber, solange die Betreiber-Felder leer sind. IBAN ohne Leerzeichen übernommen |
+| `KundeStrasse`, `KundeHausnummer`, `KundePlz`, `KundeOrt` oder `KundeAdresse` | lesen | Kundenadresse; wird Anlagenadresse, solange die Anlage-Felder leer sind |
+| `BetreiberVorname`, `BetreiberNachname` | lesen | abweichender Anlagenbetreiber. Ist eines gesetzt, gilt der Betreiber als abweichend (beide Pflicht); E-Mail, Telefon und IBAN bleiben die des Kunden, Anrede entfällt. Die Betreiberadresse (`NabDataCard.Betreiberadresse`) ist immer die Kundenadresse (keine eigenen Betreiber-Adressfelder, Entscheidung 06.11.); fehlt sie bei abweichendem Anlagenort, gilt die Anlagenadresse (kein Pflichtfeld) |
+| `AnlageStrasse`, `AnlageHausnummer`, `AnlagePlz`, `AnlageOrt` oder `AnlageAdresse` | lesen | abweichender Anlagenort |
 | `ReonicProjectId` | lesen | Verknüpfung zum Reonic-Projekt |
-| `Einspeiseart` | lesen | Voll-/Überschusseinspeisung |
-| `NhSicherungAmpere` | lesen | NH-Sicherung in A |
-| `BestandsanlageVorhanden` | lesen | Bestandsanlage ja/nein |
-| `TerminElektroinstallation`, `TerminDachmontage` | lesen | geplante Termine |
-| `ErrichterFirma`, `ErrichterOrt`, `ErrichterEintragungsnummer`, `ErrichterNetzbetreiber` | lesen | Elektro-Errichter (Installateurverzeichnis) |
-| `EvuVollmacht` | lesen | Vollmacht des Kunden |
-| `MastrBenutzername`, `MastrPasswort` | lesen | MaStR-Login des Kunden; Passwort wird nach erfolgreicher Registrierung gelöscht |
-| `Status`, `Netzbetreiber`, `Fehlertext` | schreiben | Prozessstatus, ermittelter Netzbetreiber, Fehlermeldung am Projekt |
-| `MastrNummerAnlage`, `MastrNummerSpeicher` | schreiben | MaStR-Nummern nach Registrierung |
+| `Einspeiseart` | lesen | Auswahlwert, übersetzt über `HubSpot:EinspeiseartValues`; leer = Teileinspeisung |
+| `NhSicherungAmpere` | lesen | NH-Sicherung in A (ganze Zahl, „63“ oder „63 A“); leer = 63 A |
+| `BestandsanlageVorhanden` | lesen | Bestandsanlage ja/nein (`true`/`false`, auch `ja`/`nein`); nur Gegenprüfung zu Reonic |
+| `TerminElektroinstallation`, `TerminDachmontage` | lesen | Datum oder Datum-Uhrzeit; Installationstermin = der spätere von beiden |
+| `ErrichterFirma`, `ErrichterOrt`, `ErrichterEintragungsnummer`, `ErrichterNetzbetreiber` | lesen | abweichender Elektro-Errichter je Deal; gilt, wenn `ErrichterFirma` gesetzt ist (dann `ErrichterOrt` Pflicht), sonst Sektion `Errichter` |
+| `EvuVollmacht` | – | derzeit nicht gelesen: die Vollmacht wird über die PDF-Anhänge am Deal gefunden (`HubSpot:VollmachtFileNamePattern`) |
+| `MastrBenutzername`, `MastrPasswort` | lesen | MaStR-Login des Kunden (nur in Review/Live gelesen). Fehlt eines → kein Login, Aufgabe „MaStR-Login fehlt“. Das Passwort wird **nicht** gelöscht (Abweichung vom Beschluss 26.10., Bestätigung durch Michael am 09.11. offen) |
+| `Status`, `Netzbetreiber`, `Fehlertext` | schreiben | nach jedem Zustandswechsel: Zustandsname (`ProcessState`, z. B. `NetzanmeldungSubmitted`), Netzbetreiber-Code (nur wenn ermittelt), Blockadegrund (nur bei `Blocked`, sonst geleert; ohne personenbezogene Daten) |
+| `MastrNummerAnlage`, `MastrNummerSpeicher` | schreiben | MaStR-Nummern nach Registrierung (nur wenn vorhanden; ein leerer Stand überschreibt keinen Wert am Deal) |
 
-Neue fachliche Felder: Schlüssel hier und in `instance.json` ergänzen, nie einen HubSpot-Namen im Code verdrahten.
+**Adressen:** Sind getrennte Felder (Straße, Hausnummer, PLZ, Ort) gesetzt, werden sie verwendet – alle vier Pflicht, PLZ fünfstellig; eine Hausnummer im Straßenfeld („Musterstr. 12a“) wird abgetrennt, wenn das Hausnummernfeld leer ist; sind beide gesetzt → fachliches Problem. Sonst wird die einzeilige Adresse zerlegt: „Straße Nr, PLZ Ort“, auch ohne Komma, mit Zeilenumbruch, `D-` vor der PLZ oder einem Land am Ende („Deutschland“, „Germany“, „DE“, auch ohne Komma). Nicht zerlegbar → fachliches Problem.
+
+Neue fachliche Felder: Schlüssel hier, in `HubSpotPropertyKeys` und in `instance.json` ergänzen, nie einen HubSpot-Namen im Code verdrahten.

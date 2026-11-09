@@ -1,10 +1,10 @@
 # Prozesssteuerung: der komplette Ablauf eines Vorgangs
 
-Stand 04.11.2026. Interne Doku. Beschreibt, wie der Kern einen Vorgang von der Vollmacht bis zur MaStR-Registrierung führt.
+Stand 06.11.2026 (HubSpot-Deal statt -Projekt). Interne Doku. Beschreibt, wie der Kern einen Vorgang von der Vollmacht bis zur MaStR-Registrierung führt.
 
 ## Grundprinzip: Ereignisse halten Fakten fest, Schritte entscheiden
 
-- Ein **Vorgang** (`AnmeldeProcess`) gehört zu genau einem HubSpot-Projekt und hat genau einen Zustand (`ProcessState`).
+- Ein **Vorgang** (`AnmeldeProcess`) gehört zu genau einem HubSpot-Deal (Objekttyp `HubSpot:ObjectTypeId`, Default `0-3`) und hat genau einen Zustand (`ProcessState`).
 - **Ereignisse** von außen (HubSpot-Webhook, später Postfach, Admin-Endpunkt) ändern **nie direkt den Zustand**. Sie halten nur einen **Fakt** am Vorgang fest, zum Beispiel „Einspeisezusage am 12.11. erhalten“ oder „Inbetriebnahme am 20.01.“. Danach wird ein Lauf eingeplant.
 - **Schritte** (`IProcessStep`) laufen im Hangfire-Job. Sie lesen Zustand und Fakten und entscheiden über den nächsten Zustand.
 
@@ -39,7 +39,7 @@ Zählerwechsel:  [InbetriebnahmeSubmitted] ─► ZaehlerwechselPrepared ─► 
 MaStR:          [ZaehlerwechselCompleted] ─► MastrPrepared ─► MastrAwaitingReview ─► MastrRegistered ─► Completed
 
 Jederzeit:      ─► Blocked   (technischer Fehler nach allen Retries, unklarer Versand)
-                ─► Cancelled (Projekt storniert)
+                ─► Cancelled (Deal storniert)
 ```
 
 ### Einreichungsstufen
@@ -56,7 +56,7 @@ Jede externe Einreichung durchläuft dieselben vier Zustände. Das beschreibt `S
 - Jede Einreichung läuft über `SubmissionGate`: Modus DryRun/Review/Live, Versand-Ledger und nie doppelt versenden.
 - Braucht ein Netzbetreiber eine Einreichung nicht separat, springt die Stufe direkt von „Bereit“ auf „Eingereicht“. Das gibt `INetzbetreiberAdapter.Einreichungen` vor. Bei Netze Duisburg betrifft das den Zählerantrag, der mit dem E.8 rausgeht.
 - Die Freigabe im Modus Review gilt **je Stufe**. Jede Stufe hat dafür eine eigene HubSpot-Property, damit eine stehengebliebene Freigabe der Netzanmeldung nicht auch das E.8 freigibt.
-- **Freigabe-Property zurücksetzen:** Wir haben in HubSpot nur Lesezugriff und setzen die Property nach der Freigabe nicht zurück. HubSpot meldet eine Property nur bei einer Änderung. Steht die Checkbox einer Stufe noch von einer früheren Freigabe (z. B. vorige Revision nach Rückfrage, oder nach Block/Resume) auf „true“, muss ein Mensch sie **erst zurücksetzen und dann neu setzen**. Das steht auch im Freigabe-Task. Für die Rückfrage-Erledigung gilt dasselbe.
+- **Freigabe-Property zurücksetzen:** Wir setzen die Property nach der Freigabe nicht zurück (der Adapter schreibt nur Aufgaben, Notizen, Dateien und die Status-Properties). HubSpot meldet eine Property nur bei einer Änderung. Steht die Checkbox einer Stufe noch von einer früheren Freigabe (z. B. vorige Revision nach Rückfrage, oder nach Block/Resume) auf „true“, muss ein Mensch sie **erst zurücksetzen und dann neu setzen**. Das steht auch im Freigabe-Task. Für die Rückfrage-Erledigung gilt dasselbe.
 - **Empfehlung:** Freigabe und Rückfrage-Erledigung später als Datum-/Zeitstempel-Property statt Checkbox bzw. Auswahl abbilden (z. B. „Netzanmeldung freigegeben am“, „Rückfrage direkt beantwortet am“). Dann ist jedes Setzen eine Änderung und löst ohne Zurücksetzen aus. Die `TriggerRules` können das schon: `Values` leer = jeder nicht-leere Wert löst aus, Leeren der Property löst nichts aus. Bei der Erledigung braucht es dann je Erledigungsart eine eigene Property, weil `Resolution` an der Regel hängt.
 - **Freigabe nach Block/Resume:** Eine Blockade lässt die Freigabe verfallen. Nach dem Fortsetzen in einen Freigabe-Zustand entsteht ein **neuer** Freigabe-Task (der Eintrittszeitpunkt steht im Task-Schlüssel), und ein Mensch muss erneut freigeben.
 - **DryRun**: Der Vorgang bleibt in „Vorbereitet“ stehen. Wechselt die Instanz danach auf Review oder Live, plant der Watchdog vorbereitete Vorgänge neu ein und sie laufen weiter; im DryRun selbst nicht (ein erneuter Lauf dort wäre ohnehin harmlos: kein Versand, keine erneute Ablage, Ledger-Eintrag bleibt). Für Demos auf Staging lässt `Submission:ContinueAfterDryRun = true` ihn weiterlaufen, als wäre versendet worden. Die Folgeereignisse lassen sich dann über den Admin-Endpunkt simulieren. In Produktion bleibt der Schalter immer aus; in der Umgebung `Production` bricht der Start ab, wenn er gesetzt ist.
@@ -66,7 +66,7 @@ Jede externe Einreichung durchläuft dieselben vier Zustände. Das beschreibt `S
 
 | Ereignis | Quelle heute | Quelle später | Fakt am Vorgang |
 |---|---|---|---|
-| Start | HubSpot-Stage „Vollmacht zurück“ | | legt den Vorgang an |
+| Start | Deal-Stage „Vollmacht zurück“ (`dealstage`) | | legt den Vorgang an |
 | ReviewApproved (je Stufe) | HubSpot-Property je Stufe | | Freigabe der Stufe (nur wenn sie gerade auf Freigabe wartet) |
 | EinspeisezusageReceived | HubSpot-Property (Datum) oder Admin | Postfach + KI-Klassifizierung | Datum, ggf. Vorgangsnummer des Netzbetreibers |
 | RueckfrageReceived | HubSpot-Property oder Admin | Postfach + KI | Rückfrage offen seit |
@@ -74,9 +74,9 @@ Jede externe Einreichung durchläuft dieselben vier Zustände. Das beschreibt `S
 | InbetriebnahmeReported | HubSpot-Property Inbetriebnahmedatum | | Inbetriebnahmedatum |
 | ZaehlerwechselCompleted | HubSpot-Property (Datum) oder Admin | Postfach | Zählerwechseldatum |
 | MastrCredentialsProvided | HubSpot-Property (Webformular) | | keiner; nur ein neuer Lauf |
-| Cancelled | HubSpot-Stage „storniert“ | | Storno angefordert |
+| Cancelled | Deal-Stage „storniert“ (`dealstage`) | | Storno angefordert |
 
-Welche Property welches Ereignis auslöst, ist pro Instanz konfiguriert (`HubSpot:TriggerRules`).
+Welche Property welches Ereignis auslöst, ist pro Instanz konfiguriert (`HubSpot:TriggerRules`). Der Webhook nimmt Property-Änderungen am Deal an (`deal.propertyChange` bzw. `object.propertyChange` mit `objectTypeId` `0-3`); Ereignisse anderer Objekte werden ignoriert.
 
 ## Rückfrage
 
@@ -97,7 +97,7 @@ Fakt „Storno“. Beim nächsten Lauf geht der Vorgang nach `Cancelled`, auch a
 
 ## MaStR-Login
 
-Der Kundenlogin wird nur in Review/Live gebraucht. Fehlt er, entsteht ein Task „MaStR-Login fehlt“ und der Vorgang wartet in `ZaehlerwechselCompleted`, bis `MastrCredentialsProvided` einen neuen Lauf auslöst. Im DryRun wird der Login weder gelesen noch verlangt, damit die Demo auf Staging durchläuft. Nach der Registrierung wird das Passwort gelöscht, auch im Wiederholungslauf. Die MaStR-Nummern stehen im Ledger als `anlage=SEE…;speicher=SSE…` und werden daraus wiederhergestellt.
+Der Kundenlogin wird nur in Review/Live gebraucht. Fehlt er, entsteht ein Task „MaStR-Login fehlt“ und der Vorgang wartet in `ZaehlerwechselCompleted`, bis `MastrCredentialsProvided` einen neuen Lauf auslöst. Im DryRun wird der Login weder gelesen noch verlangt, damit die Demo auf Staging durchläuft. Nach der Registrierung ruft der Schritt `IMastrCredentialStore.DeleteAsync` auf, auch im Wiederholungslauf. Der HubSpot-Adapter löscht das Passwort dabei **nicht** (bewusste Abweichung vom Beschluss 26.10., Bestätigung durch Michael am 09.11. offen; siehe [hubspot-adapter.md](hubspot-adapter.md)). Die MaStR-Nummern stehen im Ledger als `anlage=SEE…;speicher=SSE…` und werden daraus wiederhergestellt.
 
 ## Fristen und Selbstheilung (Watchdog)
 
@@ -121,9 +121,11 @@ Ein täglicher Hangfire-Job (`ProcessWatchdog`):
 
 Nach dem letzten fehlgeschlagenen Retry blockiert `ProcessFailureHandler` den Vorgang in einem frischen DI-Scope (der DbContext des gescheiterten Laufs kann unbrauchbar sein). Der Blockadegrund geht nach HubSpot und in die Alarm-Mail und enthält deshalb nur sichere Texte: Meldungen eigener Exceptions (`AutomationException`, `SubmissionConflictException`, `InvalidProcessTransitionException`), bei `HttpRequestException` nur unser Format „… HTTP {code}“ bzw. den Statuscode, bei Timeouts einen festen Text, sonst nur den Typnamen. Die volle Exception steht nur im technischen Log. Task-Schlüssel `blocked:…` enthält den Zeitpunkt der Blockade, eine erneute Blockade nach Resume erzeugt einen neuen Task.
 
+Reihenfolge nach dem Speichern: **erst die Alarm-Mail**, dann Audit, Status und Task. Alles nach dem Speichern ist best effort: Fehler werden nur geloggt (Typ, Prozess-ID, Exception-Typ), der Vorgang bleibt blockiert. So geht die Mail auch raus, wenn HubSpot selbst die Ursache ist (Entscheidung Martin, 06.11.).
+
 ## HubSpot-Spiegel
 
-Nach jedem Zustandswechsel schreibt `ICrmStatusSink` den Stand an das HubSpot-Projekt: Status, Netzbetreiber, Blockadegrund, MaStR-Nummern. Das ist die einzige UI. **Aktuell nur ein Log-Platzhalter. Bis Martin es freigibt, wird nicht nach HubSpot geschrieben.**
+Nach jedem Zustandswechsel und zusätzlich am Ende jedes Laufs (wenn der aktuelle Stand im Lauf noch nicht erfolgreich geschrieben wurde) schreibt `ICrmStatusSink` den Stand an den HubSpot-Deal, best effort: ein Fehler bricht den Lauf nicht ab, der nächste Lauf holt den Stand nach. Endzustände laufen nicht mehr. Inhalt: Status, Netzbetreiber, Blockadegrund, MaStR-Nummern. Dazu kommen Audit-Notizen (gefiltert nach `HubSpot:AuditLevel`), Aufgaben und abgelegte Dokumente (Antragsunterlagen, NAB-Datenkarte als JSON). Das ist die einzige UI. **Geschrieben wird nur mit `HubSpot__WriteEnabled=true` (Default `false`, bis Martin es freigibt); sonst nur Debug-Log.** Details, Audit-Stufen und Idempotenz: [hubspot-adapter.md](hubspot-adapter.md).
 
 ## Offene Punkte
 

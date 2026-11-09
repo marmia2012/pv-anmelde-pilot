@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -83,13 +84,14 @@ public class ProcessEngineTests
     }
 
     [Fact]
-    public async Task Waiting_run_publishes_nothing()
+    public async Task Waiting_run_publishes_current_state_once()
     {
         var process = Add(ProcessState.DataCardAggregated, ProcessState.NetzbetreiberResolved, ProcessState.NetzanmeldungSubmitted);
 
         await _h.Engine().RunAsync(process.Id, default);
 
-        Assert.Empty(_h.CrmStatus.Published);
+        // Jeder Lauf spiegelt den aktuellen Stand (holt einen gescheiterten PATCH nach), auch ohne Zustandswechsel.
+        Assert.Equal([ProcessState.NetzanmeldungSubmitted], _h.CrmStatus.Published);
     }
 
     [Fact]
@@ -182,7 +184,7 @@ public class ProcessEngineTests
     private ServiceProvider CoreServices()
     {
         var services = new ServiceCollection();
-        services.AddAutopilotCore();
+        services.AddAutopilotCore(new ConfigurationBuilder().Build());
         services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
         services.AddSingleton<ICrmProjectSource, FakeCrmSource>();
         services.AddSingleton<IPlanningDataSource, FakePlanningSource>();

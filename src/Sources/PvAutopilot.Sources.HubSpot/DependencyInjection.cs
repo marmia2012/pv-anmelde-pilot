@@ -1,10 +1,14 @@
 using System.Net.Http.Headers;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
+using PvAutopilot.Core.Http;
 using PvAutopilot.Core.Mastr;
 using PvAutopilot.Core.Notifications;
 using PvAutopilot.Core.Sources;
+using PvAutopilot.Sources.HubSpot.Api;
+using PvAutopilot.Sources.HubSpot.Documents;
 
 namespace PvAutopilot.Sources.HubSpot;
 
@@ -18,12 +22,23 @@ public static class DependencyInjection
         services.AddSingleton<HubSpotWebhookValidator>();
         services.AddSingleton<HubSpotTriggerEvaluator>();
 
-        services.AddHttpClient<ICrmProjectSource, HubSpotCrmProjectSource>(Configure);
-        services.AddHttpClient<IHumanTaskSink, HubSpotTaskSink>(Configure);
-        services.AddHttpClient<IAuditSink, HubSpotAuditSink>(Configure);
-        services.AddHttpClient<IDocumentArchive, HubSpotDocumentArchive>(Configure);
-        services.AddHttpClient<ICrmStatusSink, HubSpotStatusSink>(Configure);
-        services.AddHttpClient<IMastrCredentialStore, HubSpotMastrCredentialStore>(Configure);
+        services.TryAddTransient<ExponentialBackoffHandler>(_ => new ExponentialBackoffHandler());
+
+        // Ein typisierter Client für Lesen und Schreiben
+        services.AddHttpClient<HubSpotApiClient>(Configure).AddHttpMessageHandler<ExponentialBackoffHandler>();
+
+        // Lesen
+        services.AddScoped<VollmachtFinder>();
+        services.AddScoped<ICrmProjectSource, HubSpotCrmProjectSource>();
+        services.AddScoped<HubSpotStructureReader>();
+        services.AddScoped<IMastrCredentialStore, HubSpotMastrCredentialStore>();
+
+        // Schreiben, nur bei HubSpot:WriteEnabled (sonst Debug-Log). Idempotenz über ICrmWriteLedger (Infrastructure).
+        services.AddScoped<HubSpotWriteOnce>();
+        services.AddScoped<IHumanTaskSink, HubSpotTaskSink>();
+        services.AddScoped<IAuditSink, HubSpotAuditSink>();
+        services.AddScoped<IDocumentArchive, HubSpotDocumentArchive>();
+        services.AddScoped<ICrmStatusSink, HubSpotStatusSink>();
         return services;
     }
 
@@ -32,5 +47,7 @@ public static class DependencyInjection
         var options = sp.GetRequiredService<IOptions<HubSpotOptions>>().Value;
         http.BaseAddress = options.BaseUrl;
         http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", options.AccessToken);
+        // Das Timeout umfasst die Wartezeiten des Backoff-Handlers.
+        http.Timeout = ExponentialBackoffHandler.MaxTotalDelay + TimeSpan.FromMinutes(1);
     }
 }

@@ -7,7 +7,8 @@ namespace PvAutopilot.Core.Processes.Steps;
 /// <summary>
 /// Registriert Anlage und Speicher im MaStR mit dem Kundenlogin. Versand über das <see cref="SubmissionGate"/>,
 /// damit Modus, Freigabe und Doppelversand-Schutz genauso gelten wie beim Netzbetreiber.
-/// Nach der Registrierung wird das Passwort gelöscht.
+/// Nach der Registrierung wird <see cref="IMastrCredentialStore.DeleteAsync"/> aufgerufen (HubSpot-Adapter: löscht
+/// derzeit bewusst nicht, Abweichung vom Beschluss 26.10., siehe docs/konzept/hubspot-adapter.md).
 /// </summary>
 public sealed class MastrRegistrationStep(
     IMastrRegistrar registrar,

@@ -2,6 +2,7 @@ using System.Net;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using PvAutopilot.Core.Http;
 using PvAutopilot.Core.Sources;
 using PvAutopilot.Sources.Reonic;
 using PvAutopilot.Sources.Reonic.Api;
