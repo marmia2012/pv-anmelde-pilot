@@ -135,6 +135,9 @@ public enum DocumentKind
     Datenblatt,
     Einheitenzertifikat,
     NaSchutzZertifikat,
+
+    /// <summary>Auszug aus dem Prüfbericht zum NA-Schutz (VDE-AR-N 4105, Vordruck E.7), Herstellerdokument.</summary>
+    NaSchutzPruefbericht,
     EvuVollmacht,
     Lageplan,
     Einspeisezusage,

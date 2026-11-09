@@ -8,8 +8,19 @@
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.14" />
     <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.14" />
     <PackageReference Include="Microsoft.Playwright" Version="1.64.1" />
-    <PackageReference Include="PDFsharp" Version="6.5.0" />
+    <!-- Bewusst 6.1.1 (MIT): 6.5.0 wirft beim Öffnen „The loaded license is not valid“ (Entscheidung Martin 06.11.2026).
+         Vor einem Update das Lizenzmodell ab 6.5 klären. -->
+    <PackageReference Include="PDFsharp" Version="6.1.1" />
     <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.14" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="PvAutopilot.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Öffentliche Formulare von Netze Duisburg (Quelle: docs/context/netze-duisburg-formulare/), fester Ressourcenname je Datei. -->
+    <EmbeddedResource Include="Forms\Templates\*.pdf" LogicalName="NetzeDuisburg.Templates.%(Filename)%(Extension)" />
   </ItemGroup>
 
   <PropertyGroup>
