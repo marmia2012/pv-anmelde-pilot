@@ -54,7 +54,7 @@
 
 ## Offen bei reinsolar / Michael (bis 09.11.)
 - [ ] Netze Duisburg: Portal Pflicht oder Mail weiter möglich?
-- [ ] **Angebot/Auftragsbestätigung: in Reonic oder in HubSpot?** (siehe Tabelle unten)
+- [x] ~~Angebot/Auftragsbestätigung: in Reonic oder in HubSpot?~~ **Entschieden 09.11.:** Planung, Angebot und Unterschrift in Reonic; der Autopilot überträgt die Auftragsdaten nach der Unterschrift nach HubSpot (`docs/konzept/reonic-hubspot-auftrag.md`)
 - [ ] Reonic-Checkliste abnehmen (Empfehlung 4.1) und Felder in Reonic übertragen
 - [ ] HubSpot-Struktur Projekte/Artikel festlegen
 - [ ] HubSpot-Properties für Ereignisse und Freigaben je Stufe anlegen (bis 15.11.)
@@ -71,7 +71,7 @@
 | Frage | Auswirkung auf den Code |
 |---|---|
 | Antragsweg Netze Duisburg: Portal oder Mail? | Versandkanal des Duisburg-Adapters – austauschbar bauen |
-| **Wo entsteht das Angebot / die AB – Reonic oder HubSpot?** Arbeitsannahme Martin (03.11.): In Reonic nur Planung und Datenaufnahme beim Kunden, das Angebot erstellt Michael in HubSpot. Widerspruch in den Notizen: Termin 3 spricht von „Artikel der AB (Reonic → HubSpot)“. Nachfragen: Wo wird die AB erzeugt? Wie kommen die Artikel an den HubSpot-Deal (manuell oder Sync)? Haben die HubSpot-Produkte technische Felder (Hersteller, Modell, Wp, W, kWh)? | Quelle aller Komponentendaten (Module, WR, Speicher, Wallbox) und Datenblätter: HubSpot-Line-Items vs. Reonic-Variante + Katalog; davon hängt ab, ob Komponenten doch in die Reonic-Checkliste müssen |
+| ~~Wo entsteht das Angebot / die AB – Reonic oder HubSpot?~~ **Entschieden 09.11.: in Reonic**, Übertragung nach HubSpot per Autopilot (Feature Auftragsübernahme, 10.11.). Ursprüngliche Frage: Arbeitsannahme Martin (03.11.): In Reonic nur Planung und Datenaufnahme beim Kunden, das Angebot erstellt Michael in HubSpot. Widerspruch in den Notizen: Termin 3 spricht von „Artikel der AB (Reonic → HubSpot)“. Nachfragen: Wo wird die AB erzeugt? Wie kommen die Artikel an den HubSpot-Deal (manuell oder Sync)? Haben die HubSpot-Produkte technische Felder (Hersteller, Modell, Wp, W, kWh)? | Quelle aller Komponentendaten (Module, WR, Speicher, Wallbox) und Datenblätter: HubSpot-Line-Items vs. Reonic-Variante + Katalog; davon hängt ab, ob Komponenten doch in die Reonic-Checkliste müssen |
 | ~~Wechselrichter: Liste in der Reonic-Checkliste oder Artikel der Auftragsbestätigung?~~ **Entschieden 03.11.:** Alle Daten aus Reonic, Komponenten aus der Reonic-Planungsvariante (Vorschlag 4.1), siehe `docs/konzept/reonic-checkliste.md`. Fallback 4.2: Auswahlliste in der Checkliste. | Reonic-Adapter mappt Hauptvariante + Katalog und Checklisten-Schlüssel auf die NAB-Datenkarte |
 | Welche Daten braucht der Zählerwechsel? | Schritt Zählerwechsel noch nicht spezifiziert |
 | **MaStR vor oder nach dem Zählerwechsel?** Konzept: danach. Die MaStR-Frist (1 Monat ab Inbetriebnahme) kann aber ablaufen, wenn der Zählerwechsel dauert. | Reihenfolge der Stufen in der State-Machine (`docs/konzept/prozesssteuerung.md`); Watchdog warnt nach 7 Tagen |
