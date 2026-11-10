@@ -25,6 +25,19 @@ Damit entfallen in der Checkliste #1, #34–66 und #68–71. Die Checkliste ist 
 
 Alle Requests mit `X-Authorization`. `Reonic-Cache-Control: no-cache` nur für Projekt, Variante und Checkliste; Komponentenversionen sind unveränderlich und dürfen aus dem Reonic-Cache kommen (schont das „uncached“-Limit). Backoff bei 429/5xx: 2/4/8/16 s, längeres `Retry-After` gewinnt, höchstens 60 s je Wartezeit; das HttpClient-Timeout liegt über der Summe. Fehlt `Reonic__ApiKey` oder endet `BaseUrl` nicht auf `/`, startet der Host nicht.
 
+## Unterschriebener Auftrag (`ReonicSignedOrderSource`)
+
+Für die Auftragsübernahme nach HubSpot ([reonic-hubspot-auftrag.md](reonic-hubspot-auftrag.md)), rein lesend:
+
+1. `GET /residentialProjects/{id}` → zusätzlich `integrations.hubspotDealId`
+2. `GET /residentialProjects/{id}/signatureRequests` → gegebene Signatur, sonst die jüngste mit `status = signed`
+3. `GET /residentialProjects/{id}/variants/{signedVariantId}` → **alle** Positionen (alle Systeme + gewählte Zusatzpakete) mit `articleNumber`, `description`, `visibleToCustomer`, `unitSalesPrice` (brutto je Stück). Einkaufspreise stehen nicht im DTO.
+4. Katalog der relevanten Typen über `Mapping/ComponentLoader` (dieselbe Logik wie bei der Hauptvariante, aus `ReonicPlanningDataSource` herausgezogen) → `ComponentMapper`
+
+**Download `signedPdfUrl`** über `Api/ReonicFileDownloader`: eigener benannter HttpClient (`reonic-signed-files`) **ohne** `X-Authorization` und ohne Basis-URL – der API-Key darf nicht an den Host der signierten URL gehen. Nur `https`, höchstens 20 MB; 403/404/410, zu groß oder keine https-URL → `null` (fachlich). `signedPdfUrl` ist `[PersonalData]` und erscheint nie in Log oder Fehlermeldungen.
+
+**Webhook** `POST /webhooks/reonic` (`Webhooks/ReonicWebhookValidator`, `ReonicWebhookParser`): HMAC-SHA256 mit `Reonic__WebhookSecret` über `${timestamp}.${rawBody}`, ±5 min. Ausgewertet wird nur `residentialOffer_signed`; Widerruf wird ignoriert.
+
 ## Fehlerbehandlung
 
 - **Fachlich** (Daten fehlen oder sind unplausibel): `PlanningData.Problems`, daraus wird über den Aggregator ein HubSpot-Task. Kein Retry. Beispiele: keine Hauptvariante, Katalogwert fehlt, bedingtes Pflichtfeld leer, unbekannter Auswahlwert, Feld doppelt, mehrere Speicher.

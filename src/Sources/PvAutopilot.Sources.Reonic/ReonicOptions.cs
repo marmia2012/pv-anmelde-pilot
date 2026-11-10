@@ -17,4 +17,10 @@ public sealed class ReonicOptions
 
     /// <summary>Phase, deren Checkliste den Block „Netzanmeldung“ enthält (<c>request</c>, <c>offer</c>, <c>installation</c>).</summary>
     public string ChecklistStage { get; set; } = "offer";
+
+    /// <summary>
+    /// Secret des Reonic-Webhooks (HMAC-SHA256, Header <c>X-Reonic-Signature</c>), nur über Umgebungsvariable
+    /// <c>Reonic__WebhookSecret</c>. Leer = Webhook aus: <c>POST /webhooks/reonic</c> lehnt alles mit 401 ab.
+    /// </summary>
+    public string WebhookSecret { get; set; } = string.Empty;
 }

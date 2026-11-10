@@ -73,7 +73,14 @@ public sealed class HubSpotTaskSink(
 {
     public const string WriteType = "Aufgabe";
 
-    public async Task CreateTaskAsync(string crmProjectId, string taskKey, string title, string body, CancellationToken ct)
+    public Task CreateTaskAsync(string crmProjectId, string taskKey, string title, string body, CancellationToken ct) =>
+        CreateTaskAsync(options.Value.ObjectTypeId, crmProjectId, taskKey, title, body, ct);
+
+    /// <summary>
+    /// Wie <see cref="IHumanTaskSink.CreateTaskAsync"/>, aber an einem ausdrücklich genannten Objekttyp statt
+    /// <see cref="HubSpotOptions.ObjectTypeId"/> (Auftragsübernahme: immer der Deal <c>0-3</c>).
+    /// </summary>
+    public async Task CreateTaskAsync(string objectTypeId, string crmProjectId, string taskKey, string title, string body, CancellationToken ct)
     {
         var o = options.Value;
         if (!o.WriteEnabled)
@@ -92,17 +99,17 @@ public sealed class HubSpotTaskSink(
                 ["hs_task_status"] = "NOT_STARTED",
                 ["hs_task_type"] = "TODO",
             };
-            if (await OwnerAsync(crmProjectId, token) is { } owner)
+            if (await OwnerAsync(objectTypeId, crmProjectId, token) is { } owner)
                 properties[HubSpotPropertyKeys.HubSpotOwnerId] = owner;
 
-            return await api.CreateAssociatedObjectAsync("tasks", properties, o.ObjectTypeId, crmProjectId, token);
+            return await api.CreateAssociatedObjectAsync("tasks", properties, objectTypeId, crmProjectId, token);
         }, ct);
     }
 
-    private async Task<string?> OwnerAsync(string dealId, CancellationToken ct)
+    private async Task<string?> OwnerAsync(string objectTypeId, string dealId, CancellationToken ct)
     {
         var o = options.Value;
-        var deal = await api.GetObjectAsync(o.ObjectTypeId, dealId, [HubSpotPropertyKeys.HubSpotOwnerId], ct);
+        var deal = await api.GetObjectAsync(objectTypeId, dealId, [HubSpotPropertyKeys.HubSpotOwnerId], ct);
         if (deal?.Value(HubSpotPropertyKeys.HubSpotOwnerId) is { } owner)
             return owner;
 
@@ -175,7 +182,14 @@ public sealed class HubSpotDocumentArchive(
     public const string NoteWriteType = "Ablage-Notiz";
     public const string FolderRoot = "/pv-autopilot";
 
-    public async Task StoreAsync(string crmProjectId, IReadOnlyList<GeneratedDocument> documents, CancellationToken ct)
+    public Task StoreAsync(string crmProjectId, IReadOnlyList<GeneratedDocument> documents, CancellationToken ct) =>
+        StoreAsync(options.Value.ObjectTypeId, crmProjectId, documents, ct);
+
+    /// <summary>
+    /// Wie <see cref="IDocumentArchive.StoreAsync"/>, aber die Notiz hängt an einem ausdrücklich genannten Objekttyp statt
+    /// <see cref="HubSpotOptions.ObjectTypeId"/> (Auftragsübernahme: immer der Deal <c>0-3</c>).
+    /// </summary>
+    public async Task StoreAsync(string objectTypeId, string crmProjectId, IReadOnlyList<GeneratedDocument> documents, CancellationToken ct)
     {
         if (documents.Count == 0)
             return;
@@ -209,7 +223,7 @@ public sealed class HubSpotDocumentArchive(
                     + string.Join(Environment.NewLine, documents.Select(d => d.FileName))),
                 ["hs_attachment_ids"] = string.Join(';', fileIds),
             },
-            o.ObjectTypeId, crmProjectId, token), ct);
+            objectTypeId, crmProjectId, token), ct);
     }
 
     /// <summary>

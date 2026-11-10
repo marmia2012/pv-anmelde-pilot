@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using PvAutopilot.Core.Notifications;
+using PvAutopilot.Core.Orders;
 using PvAutopilot.Core.Processes;
 using PvAutopilot.Core.Submission;
 using PvAutopilot.Infrastructure.Jobs;
@@ -47,6 +48,11 @@ public static class AdminEndpoints
             }
         });
 
+        // Auftragsübernahme Reonic → HubSpot manuell anstoßen bzw. nachholen; bei HubSpot:WriteEnabled=false nur Vorschau.
+        admin.MapPost("/reonic/projects/{projectId}/order-sync", (string projectId, string? signatureRequestId,
+                OrderTransferService service, IProcessRunLock runLock, CancellationToken ct) =>
+            OrderSyncAsync(projectId, signatureRequestId, service, runLock, ct));
+
         admin.MapGet("/processes/{id:guid}", async (Guid id, IProcessStore store, CancellationToken ct) =>
             await store.GetAsync(id, ct) is { } p
                 ? Results.Ok(new
@@ -87,6 +93,40 @@ public static class AdminEndpoints
             scheduler.Enqueue(id);
             return Results.Accepted();
         });
+    }
+
+    /// <summary>
+    /// Führt die Übernahme synchron aus. Dasselbe Lock wie der Job (<see cref="OrderTransferJob.LockId"/>), damit Webhook-Job
+    /// und manueller Aufruf nicht parallel Artikel anlegen: belegt → 409. Technischer Fehler → 502 mit Pfad und Status.
+    /// Antwort ohne Werte (nur IDs, Anzahlen, Property-Namen, Probleme mit Produktnamen).
+    /// </summary>
+    public static async Task<IResult> OrderSyncAsync(string projectId, string? signatureRequestId,
+        OrderTransferService service, IProcessRunLock runLock, CancellationToken ct)
+    {
+        var project = projectId?.Trim();
+        if (string.IsNullOrEmpty(project))
+            return Results.BadRequest(new { error = "projectId fehlt." });
+        // Leere Signatur = keine: dann die jüngste unterschriebene.
+        var signature = string.IsNullOrWhiteSpace(signatureRequestId) ? null : signatureRequestId.Trim();
+
+        await using var held = await runLock.TryAcquireAsync(OrderTransferJob.LockId(project), OrderTransferJob.LockWait, ct);
+        if (held is null)
+            return Results.Conflict(new { error = "Auftragsübernahme für dieses Projekt läuft bereits." });
+
+        try
+        {
+            return Results.Ok(await service.TransferAsync(project, signature, ct));
+        }
+        catch (HttpRequestException ex)
+        {
+            // Message enthält nur Pfad und Status (Api-Clients), nie Antwort-Body oder signierte URL.
+            return Results.Problem(ex.Message, statusCode: StatusCodes.Status502BadGateway);
+        }
+        catch (SignatureNotVisibleException ex)
+        {
+            // Nur Projekt- und Signatur-ID in der Meldung.
+            return Results.Conflict(new { error = ex.Message });
+        }
     }
 
     private static async ValueTask<object?> RequireAdminKey(EndpointFilterInvocationContext context, EndpointFilterDelegate next)

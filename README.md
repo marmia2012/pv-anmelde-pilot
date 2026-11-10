@@ -101,6 +101,7 @@ Ein Vorgang läuft nie zweimal gleichzeitig: `ProcessJob` nimmt ein Postgres-Adv
 
 - `PUT /admin/netzbetreiber-plz`: CSV `plz;ort;netzbetreiber` (nur Semikolon) ersetzt die PLZ-Tabelle; eine leere Datei wird mit 400 abgelehnt
 - `GET /admin/hubspot/structure`: Pipelines (mit Stage-IDs) und Properties (interner Name, Label, Typ, Gruppe, Optionswerte) des Objekttyps `HubSpot:ObjectTypeId` – zum Füllen von `instance.json`. Nur Metadaten, keine Datensätze. 502, wenn HubSpot einen Fehler liefert (Meldung nur mit Pfad und Status)
+- `POST /admin/reonic/projects/{projectId}/order-sync?signatureRequestId=`: Auftragsübernahme Reonic → HubSpot synchron anstoßen bzw. nachholen ([Konzept](docs/konzept/reonic-hubspot-auftrag.md)); ohne `signatureRequestId` die jüngste unterschriebene. Antwort: IDs, `written`, `skipReason`, Anzahl Artikel, Property-Namen, PDF ja/nein, fremde Artikel, Probleme (ohne Werte). Bei `HubSpot__WriteEnabled=false` nur Vorschau. 400 bei leerer `projectId`, 409 bei laufender Übernahme oder wenn die angegebene Signatur in Reonic nicht (als unterschrieben) sichtbar ist, 502 bei technischem Fehler
 - `GET /admin/processes/{id}`: Status, Fakten (Revision, Daten, Netzbetreiber-Referenz, MaStR-Nummern, Storno) und Verlauf eines Vorgangs (ohne personenbezogene Daten)
 - `POST /admin/processes/{id}/run`: Lauf anstoßen (404, wenn unbekannt)
 - `POST /admin/processes/{id}/resume`: blockierten Vorgang fortsetzen (404 unbekannt, 409 nicht blockiert)

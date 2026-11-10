@@ -81,30 +81,6 @@ public sealed class ReonicPlanningDataSource(
             return [];
         }
 
-        // Nur relevante Typen aus dem Katalog laden: spart Calls und verhindert, dass eine gelöschte
-        // Zubehör-Komponente den Vorgang blockiert.
-        var lineItems = variant.Systems.AllLineItems
-            .Concat((variant.OptionalBundles ?? []).Where(b => b.Selected).SelectMany(b => b.LineItems ?? []))
-            .Where(i => ComponentMapper.RelevantTypes.Contains(i.ComponentType))
-            .ToList();
-
-        // Jede Komponentenversion nur einmal laden (Rate-Limit).
-        var versions = new Dictionary<(string, string), ReonicComponent?>();
-        var result = new List<PlannedComponent>();
-        foreach (var item in lineItems)
-        {
-            var versionKey = (item.ComponentId, item.ComponentVersionId);
-            if (!versions.TryGetValue(versionKey, out var component))
-            {
-                component = await api.GetComponentVersionAsync(item.ComponentId, item.ComponentVersionId, ct);
-                versions[versionKey] = component;
-            }
-
-            if (component is null)
-                problems.Add($"Reonic-Katalog: Komponente „{item.Brand} {item.Name}“ nicht gefunden");
-            else
-                result.Add(new PlannedComponent(item, component));
-        }
-        return result;
+        return await ComponentLoader.LoadAsync(api, variant.SelectedLineItems, problems, ct);
     }
 }

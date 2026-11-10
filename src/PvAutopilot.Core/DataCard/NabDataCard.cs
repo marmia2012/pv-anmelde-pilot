@@ -142,4 +142,10 @@ public enum DocumentKind
     Lageplan,
     Einspeisezusage,
     Sonstiges,
+
+    /// <summary>
+    /// Unterschriebenes Auftrags-PDF aus der Planungssoftware (Reonic <c>signedPdfUrl</c>). Am Ende angehängt, damit
+    /// gespeicherte Zahlenwerte der übrigen Arten gleich bleiben.
+    /// </summary>
+    Auftrag,
 }

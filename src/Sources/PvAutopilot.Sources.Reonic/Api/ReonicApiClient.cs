@@ -18,6 +18,10 @@ public sealed class ReonicApiClient(HttpClient http)
     public Task<ReonicVariant?> GetVariantAsync(string projectId, string variantId, CancellationToken ct) =>
         GetOrNullAsync<ReonicVariant>($"residentialProjects/{Escape(projectId)}/variants/{Escape(variantId)}", ct);
 
+    /// <returns>Alle Signaturanfragen des Projekts; leer, wenn das Projekt keine hat bzw. nicht existiert (404).</returns>
+    public async Task<IReadOnlyList<ReonicSignatureRequest>> GetSignatureRequestsAsync(string projectId, CancellationToken ct) =>
+        (await GetOrNullAsync<ReonicSignatureRequestsResponse>($"residentialProjects/{Escape(projectId)}/signatureRequests", ct))?.Data ?? [];
+
     public Task<ReonicComponent?> GetComponentVersionAsync(string componentId, string versionId, CancellationToken ct) =>
         GetOrNullAsync<ReonicComponent>($"components/{Escape(componentId)}/versions/{Escape(versionId)}", ct);
 

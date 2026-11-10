@@ -12,7 +12,29 @@ public sealed record ComponentData(
     Batteriespeicher? Speicher,
     Wallbox? Wallbox,
     IReadOnlyList<DocumentRef> Datenblaetter,
-    IReadOnlyList<string> Problems);
+    IReadOnlyList<string> Problems)
+{
+    /// <summary>Dieselben Probleme wie <see cref="Problems"/> (gleiche Reihenfolge und Texte), mit Kategorie zum Filtern.</summary>
+    public IReadOnlyList<ComponentProblem> ProblemDetails { get; init; } = [];
+}
+
+/// <summary>Kategorie eines Komponentenproblems; erlaubt Verbrauchern zu filtern, ohne auf Texte zu prüfen.</summary>
+public enum ComponentProblemKind
+{
+    /// <summary>Technischer Katalogwert fehlt (Wp, AC-Leistung, Kapazität, Ladeleistung).</summary>
+    CatalogValue,
+
+    /// <summary>Mengeneinheit ist nicht „Stück“.</summary>
+    QuantityUnit,
+
+    /// <summary>Kein Datenblatt im Katalog (nur für die Netzanmeldung relevant).</summary>
+    MissingDatasheet,
+
+    /// <summary>Konstellation, die die Netzanmeldung noch nicht automatisch abbildet (z. B. mehrere Speicher-/Wallbox-Typen).</summary>
+    NotYetSupportedForNetzanmeldung,
+}
+
+public sealed record ComponentProblem(ComponentProblemKind Kind, string Text);
 
 /// <summary>
 /// Übersetzt die Positionen der Hauptvariante in Module, Wechselrichter, Speicher und Wallbox (Vorschlag 4.1).
@@ -34,7 +56,7 @@ public static class ComponentMapper
 
     public static ComponentData Map(IReadOnlyList<PlannedComponent> components)
     {
-        var problems = new List<string>();
+        var problems = new List<ComponentProblem>();
         var module = new List<ModulPosition>();
         var wechselrichter = new List<WechselrichterPosition>();
         var speicher = new List<Batteriespeicher>();
@@ -48,7 +70,7 @@ public static class ComponentMapper
 
             var label = $"{item.ComponentType} „{item.Brand} {item.Name}“";
             if (component.QuantityUnit is { } unit && unit != "item")
-                problems.Add($"Reonic-Planung: {label} hat Mengeneinheit „{unit}“ statt Stück");
+                problems.Add(new(ComponentProblemKind.QuantityUnit, $"Reonic-Planung: {label} hat Mengeneinheit „{unit}“ statt Stück"));
 
             var attributes = component.Attributes;
             switch (item.ComponentType)
@@ -57,7 +79,7 @@ public static class ComponentMapper
                     if (attributes?.WattPeak is { } wp and > 0)
                         module.Add(new ModulPosition(item.Brand, item.Name, wp, item.Quantity));
                     else
-                        problems.Add($"Reonic-Katalog: {label} ohne Leistung (Wp)");
+                        problems.Add(new(ComponentProblemKind.CatalogValue, $"Reonic-Katalog: {label} ohne Leistung (Wp)"));
                     break;
 
                 case "inverter" or "microinverter":
@@ -77,12 +99,12 @@ public static class ComponentMapper
                     if (attributes?.MaxChargingPower is { } w and > 0)
                         wallboxen.Add(new Wallbox(item.Brand, item.Name, w / 1000m, item.Quantity));
                     else
-                        problems.Add($"Reonic-Katalog: {label} ohne Ladeleistung");
+                        problems.Add(new(ComponentProblemKind.CatalogValue, $"Reonic-Katalog: {label} ohne Ladeleistung"));
                     break;
             }
 
             if (string.IsNullOrWhiteSpace(component.DatasheetUrl))
-                problems.Add($"Reonic-Katalog: {label} ohne Datenblatt");
+                problems.Add(new(ComponentProblemKind.MissingDatasheet, $"Reonic-Katalog: {label} ohne Datenblatt"));
             else if (!datenblaetter.Any(d => d.Reference == component.DatasheetUrl))
                 datenblaetter.Add(new DocumentRef(DocumentKind.Datenblatt, DocumentSource, component.DatasheetUrl,
                     SafeFileName($"Datenblatt {item.Brand} {item.Name}") + ".pdf"));
@@ -90,9 +112,9 @@ public static class ComponentMapper
 
         var wallboxTypen = Merge(wallboxen, w => (w.Hersteller, w.Modell, w.LeistungKw), (a, b) => a with { Anzahl = a.Anzahl + b.Anzahl });
         if (speicher.Count > 1)
-            problems.Add("Reonic-Planung: mehrere verschiedene Speicher – wird noch nicht automatisch angemeldet");
+            problems.Add(new(ComponentProblemKind.NotYetSupportedForNetzanmeldung, "Reonic-Planung: mehrere verschiedene Speicher – wird noch nicht automatisch angemeldet"));
         if (wallboxTypen.Count > 1)
-            problems.Add("Reonic-Planung: mehrere verschiedene Wallboxen – wird noch nicht automatisch angemeldet");
+            problems.Add(new(ComponentProblemKind.NotYetSupportedForNetzanmeldung, "Reonic-Planung: mehrere verschiedene Wallboxen – wird noch nicht automatisch angemeldet"));
 
         return new ComponentData(
             Merge(module, m => (m.Hersteller, m.Modell, m.LeistungWp), (a, b) => a with { Anzahl = a.Anzahl + b.Anzahl }),
@@ -100,7 +122,10 @@ public static class ComponentMapper
             speicher.FirstOrDefault(),
             wallboxTypen.FirstOrDefault(),
             datenblaetter,
-            problems);
+            problems.Select(p => p.Text).ToList())
+        {
+            ProblemDetails = problems,
+        };
     }
 
     /// <summary>Katalognamen wie „HVS 7.7 / 3 Module“ enthalten Zeichen, die in Dateinamen nicht erlaubt sind.</summary>
@@ -112,21 +137,21 @@ public static class ComponentMapper
 
     private static void AddInverter(
         ReonicLineItem item, ReonicComponentAttributes? attributes, string label,
-        List<WechselrichterPosition> target, List<string> problems)
+        List<WechselrichterPosition> target, List<ComponentProblem> problems)
     {
         if (attributes?.NominalOutputPower is { } w and > 0)
             target.Add(new WechselrichterPosition(item.Brand, item.Name, null, w, item.Quantity, null, attributes.NumberOfPhases));
         else
-            problems.Add($"Reonic-Katalog: {label} ohne AC-Nennleistung");
+            problems.Add(new(ComponentProblemKind.CatalogValue, $"Reonic-Katalog: {label} ohne AC-Nennleistung"));
     }
 
     private static void AddStorage(
         ReonicLineItem item, ReonicComponentAttributes? attributes, string label,
-        List<Batteriespeicher> target, List<string> problems)
+        List<Batteriespeicher> target, List<ComponentProblem> problems)
     {
         if (attributes?.Capacity is not { } wh || wh <= 0)
         {
-            problems.Add($"Reonic-Katalog: {label} ohne Kapazität");
+            problems.Add(new(ComponentProblemKind.CatalogValue, $"Reonic-Katalog: {label} ohne Kapazität"));
             return;
         }
         // Modulare Speicher: Kapazität je Stück × Anzahl. Kopplung AC/DC kommt aus dem Datenblatt (Konzept 4.7).
