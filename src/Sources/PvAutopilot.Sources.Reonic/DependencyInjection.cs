@@ -1,9 +1,12 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using PvAutopilot.Core.Http;
+using PvAutopilot.Core.Orders;
 using PvAutopilot.Core.Sources;
 using PvAutopilot.Sources.Reonic.Api;
+using PvAutopilot.Sources.Reonic.Webhooks;
 
 namespace PvAutopilot.Sources.Reonic;
 
@@ -30,6 +33,18 @@ public static class DependencyInjection
             .AddHttpMessageHandler<CacheBypassHandler>()
             .AddHttpMessageHandler<ExponentialBackoffHandler>();
         services.AddScoped<IPlanningDataSource, ReonicPlanningDataSource>();
+
+        // Signierte Datei-URLs (signedPdfUrl): eigener Client ohne X-Authorization und ohne Basis-URL –
+        // der API-Key darf nicht an fremde Hosts gehen.
+        services.AddHttpClient<ReonicFileDownloader>(ReonicFileDownloader.HttpClientName, http =>
+        {
+            http.Timeout = TimeSpan.FromMinutes(2);
+            http.MaxResponseContentBufferSize = ReonicFileDownloader.MaxBytes;
+        });
+        services.AddScoped<ISignedOrderSource, ReonicSignedOrderSource>();
+
+        services.TryAddSingleton(TimeProvider.System);
+        services.AddSingleton<ReonicWebhookValidator>();
         return services;
     }
 }

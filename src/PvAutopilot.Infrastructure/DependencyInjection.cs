@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using PvAutopilot.Core.Netzbetreiber;
 using PvAutopilot.Core.Notifications;
+using PvAutopilot.Core.Orders;
 using PvAutopilot.Core.Processes;
 using PvAutopilot.Core.Submission;
 using PvAutopilot.Infrastructure.Jobs;
@@ -46,6 +47,8 @@ public static class DependencyInjection
         services.AddScoped<IProcessScheduler, HangfireProcessScheduler>();
         services.AddScoped<ProcessJob>();
         services.AddScoped<IProcessRunLock, PostgresProcessRunLock>();
+        services.AddScoped<OrderTransferJob>();
+        services.AddScoped<IOrderTransferScheduler, HangfireOrderTransferScheduler>();
         services.AddScoped<ProcessWatchdogJob>();
         // Registriert normalerweise der Kern; TryAdd, damit es keine Doppelregistrierung gibt.
         services.TryAddScoped<ProcessWatchdog>();

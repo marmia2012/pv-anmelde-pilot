@@ -1,15 +1,49 @@
+using PvAutopilot.Core.Logging;
+
 namespace PvAutopilot.Sources.Reonic.Api;
 
 // Nur die Felder, die der Adapter braucht. Quelle: OpenAPI-Spezifikation v3 (https://api.reonic.com/rest/v3/openapi).
+// Einkaufspreise (unitPurchasePrice, totalPurchasePrice, purchase*) werden bewusst nicht gelesen.
 
 /// <summary><c>GET /residentialProjects/{projectId}</c> (<c>getResidentialProjectById</c>).</summary>
-public sealed record ReonicProject(string Id, string? MeterNumber, string? PrimaryOfferVariantId);
+public sealed record ReonicProject(
+    string Id,
+    string? MeterNumber,
+    string? PrimaryOfferVariantId,
+    ReonicProjectIntegrations? Integrations = null);
+
+/// <summary>Verknüpfungen des Projekts mit anderen Systemen; <c>hubspotDealId</c> ist der HubSpot-Deal.</summary>
+public sealed record ReonicProjectIntegrations(string? HubspotDealId);
+
+/// <summary><c>GET /residentialProjects/{projectId}/signatureRequests</c>.</summary>
+public sealed record ReonicSignatureRequestsResponse(IReadOnlyList<ReonicSignatureRequest>? Data);
+
+/// <summary>
+/// Signaturanfrage eines Angebots. <see cref="Status"/>: <c>awaitingSignature</c>, <c>signed</c>, <c>expired</c>,
+/// <c>withdrawn</c>, <c>revokedByCustomer</c>. <see cref="SignedPdfUrl"/> ist eine signierte URL auf das Kunden-PDF.
+/// </summary>
+public sealed record ReonicSignatureRequest(
+    string Id,
+    string? Status,
+    string? SignedVariantId,
+    [property: PersonalData] string? SignedPdfUrl,
+    DateTimeOffset? SignedAt)
+{
+    public const string StatusSigned = "signed";
+
+    public bool IsSigned => string.Equals(Status, StatusSigned, StringComparison.Ordinal);
+}
 
 /// <summary><c>GET /residentialProjects/{projectId}/variants/{variantId}</c> (<c>getResidentialProjectVariantById</c>).</summary>
 public sealed record ReonicVariant(
     string Id,
     ReonicVariantSystems Systems,
-    IReadOnlyList<ReonicOptionalBundle>? OptionalBundles);
+    IReadOnlyList<ReonicOptionalBundle>? OptionalBundles)
+{
+    /// <summary>Alle Positionen in Reihenfolge der Variante: alle Systeme, dann die gewählten Zusatzpakete.</summary>
+    public IEnumerable<ReonicLineItem> SelectedLineItems =>
+        Systems.AllLineItems.Concat((OptionalBundles ?? []).Where(b => b.Selected).SelectMany(b => b.LineItems ?? []));
+}
 
 public sealed record ReonicVariantSystems(
     ReonicVariantSystem? Solar,
@@ -28,13 +62,24 @@ public sealed record ReonicVariantSystem(IReadOnlyList<ReonicLineItem>? LineItem
 
 public sealed record ReonicOptionalBundle(string Id, bool Selected, IReadOnlyList<ReonicLineItem>? LineItems);
 
+/// <summary>
+/// Eine Position der Variante. <see cref="UnitSalesPrice"/> ist der Verkaufspreis je Stück, <see cref="Description"/>
+/// der Langtext. Einkaufspreise stehen bewusst nicht im DTO.
+/// </summary>
 public sealed record ReonicLineItem(
     string ComponentId,
     string ComponentVersionId,
     string ComponentType,
     string Name,
     string Brand,
-    decimal Quantity);
+    decimal Quantity,
+    string? ArticleNumber = null,
+    string? Description = null,
+    bool VisibleToCustomer = true,
+    ReonicPrice? UnitSalesPrice = null);
+
+/// <summary>Verkaufspreis je Stück: netto, brutto, Steuerbetrag, Steuersatz.</summary>
+public sealed record ReonicPrice(decimal? Net, decimal? Gross, decimal? Vat, decimal? VatRate);
 
 /// <summary><c>GET /components/{componentId}/versions/{versionId}</c> (<c>getComponentVersionById</c>).</summary>
 public sealed record ReonicComponent(

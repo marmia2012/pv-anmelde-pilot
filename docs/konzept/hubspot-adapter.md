@@ -28,6 +28,7 @@ Alle Sinks in `HubSpotServices.cs`; Verknüpfung mit dem Deal über den vordefin
 | `IAuditSink` → `HubSpotAuditSink` | jedes Audit-Ereignis mit Stufe ≥ `HubSpot:AuditLevel` | `POST crm/v3/objects/notes` | „PV Autopilot · {Typ}: {Nachricht}“ (ohne personenbezogene Daten) |
 | `IDocumentArchive` → `HubSpotDocumentArchive` | Antragsunterlagen (je Stufe), NAB-Datenkarte nach der Aggregation | je Dokument `POST files/v3/files` (multipart, `access: PRIVATE`, Ordner `/pv-autopilot/<dealId>`), dann `POST crm/v3/objects/notes` mit `hs_attachment_ids` | Notiz listet die Dateinamen (nur in HubSpot, nie im Log) |
 | `ICrmStatusSink` → `HubSpotStatusSink` | nach jedem Zustandswechsel, am Ende jedes Laufs (falls der aktuelle Stand im Lauf noch nicht erfolgreich geschrieben wurde), beim Blockieren, nach Resume | `PATCH crm/v3/objects/{type}/{id}` | siehe „Status-Properties“ |
+| `ICrmOrderSink` → `HubSpotOrderSink` | Auftragsübernahme nach der Unterschrift in Reonic ([reonic-hubspot-auftrag.md](reonic-hubspot-auftrag.md)) | `GET` Deal, `GET crm/v4/objects/0-3/{id}/associations/line_items`, je Position `POST crm/v3/objects/line_items` (Verknüpfung Artikel → Deal 20), `PATCH` Deal (`Auftrag*`), Datei + Notiz über `HubSpotDocumentArchive` | Artikel mit Name, Menge, Bruttopreis, SKU, Langtext; immer am Deal `0-3` (ID aus `integrations.hubspotDealId`), unabhängig von `ObjectTypeId`. Aufgaben und PDF dafür über die Überladungen `HubSpotTaskSink.CreateTaskAsync(objectTypeId, …)` bzw. `HubSpotDocumentArchive.StoreAsync(objectTypeId, …)` |
 | `IMastrCredentialStore.DeleteAsync` | nach der MaStR-Registrierung | – | **löscht nicht**, nur Info-Log (siehe „MaStR-Passwort“) |
 
 Die NAB-Datenkarte legt `AggregateDataCardStep` nach erfolgreicher Aggregation als `nab-datenkarte-r<Revision>.json` (JSON, Enums als Text) über `IDocumentArchive` ab, mit stabilem Ablage-Schlüssel `datacard:<prozess>:r<Revision>` (`GeneratedDocument.ArchiveKey`): je Vorgang und Revision genau eine Datei, auch wenn ein Wiederholungslauf eine inhaltlich geänderte Karte erzeugt. `DocumentRef.Reference` (signierte URLs, Datei-IDs) steht **nicht** in der abgelegten Datei, nur Art, Quelle und Dateiname; die Prozess-DB speichert die Karte vollständig. Konzept: Datenkarte in der Prozess-DB und in HubSpot.
@@ -67,6 +68,10 @@ Aufgaben, Notizen und Dateien laufen über `HubSpotWriteOnce` und die Tabelle `c
 | Datei ohne `ArchiveKey` (Antragsunterlagen) | `file:<dealId>:<hash dateiname>:<sha-256 inhalt>` – gleicher Name und Inhalt = keine zweite Datei |
 | Alarm „Status abgelehnt“ | `alert:status:<prozess>:<zustand>` – ein Alarm je Vorgang und Zustand |
 | Ablage-Notiz | `file-note:<dealId>:<hash der datei-schlüssel>` – dieselben Dateien = keine zweite Notiz |
+| Artikel (Auftrag) | `lineitem:<dealId>:<signatur>:<index>` – je Position der unterschriebenen Variante genau ein Artikel |
+| Auftrag übertragen | `order:<dealId>` → Signatur-ID; eine andere Signatur am selben Deal schreibt nichts (nur Aufgabe) |
+| Auftrags-PDF | Ablage-Schlüssel `order-pdf:<signatur>` → `file:<dealId>:order-pdf:<signatur>` |
+| Alarme Auftrag | `alert:order:<projekt>:not-found`, `alert:order:<projekt>:<signatur>:no-deal`, `…:deal-not-found` |
 
 Hashes (SHA-256, gekürzt auf 16 Hex-Zeichen) statt Klartext, weil Dateinamen und Nachrichten nicht in Schlüssel und Log gehören. Dateien und Ablage-Notiz hängen an der Deal-ID statt an der Prozess-ID, weil `IDocumentArchive` nur die Deal-ID bekommt; Deal und Vorgang sind 1:1 (eindeutiger Index auf `processes.CrmProjectId`).
 
@@ -118,7 +123,7 @@ Beschluss Termin 3 (26.10.): Passwort nach erfolgreicher Registrierung löschen.
 ## Offen
 
 - Interne Property-Namen und Stage-IDs fehlen bis zum Token (Struktur-Endpunkt); bis dahin leer in `instance.json`.
-- Scopes in Michaels Anleitung: Deals, Notizen, E-Mails, Aufgaben, Dateien statt Projekte/Kontakte.
+- Scopes in Michaels Anleitung: Deals, Notizen, E-Mails, Aufgaben, Dateien statt Projekte/Kontakte; für die Auftragsübernahme zusätzlich `crm.objects.line_items.read` / `.write`.
 - **Endzustände holen keinen gescheiterten Status nach:** Scheitert der PATCH beim Wechsel nach `Completed` oder `Cancelled` (transient), läuft der Vorgang nicht mehr; HubSpot zeigt den vorigen Status, bis jemand eingreift (nur Warning im Log).
 - **Kein erneuter Alarm nach gescheitertem Alarm:** Scheitert die Alarm-Mail beim Blockieren, wird das nur geloggt (Error); eine zweite Retry-Kette alarmiert nicht erneut, weil der Vorgang schon blockiert ist. Erinnerung nur über den Watchdog (Frist `Blocked`, 1 Tag), und dessen Aufgabe braucht ein erreichbares HubSpot.
 - **Umlaute im Multipart-Dateinamen** (z. B. „Zählerantrag.pdf“) gegen echtes HubSpot prüfen: .NET schreibt zusätzlich `filename*` (RFC 5987); ob die Files API den Namen korrekt übernimmt, ist ungetestet.

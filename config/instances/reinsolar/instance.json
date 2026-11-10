@@ -131,7 +131,18 @@
       "Netzbetreiber": "",
       "Fehlertext": "",
       "MastrNummerAnlage": "",
-      "MastrNummerSpeicher": ""
+      "MastrNummerSpeicher": "",
+      "AuftragUnterschriftsdatum": "",
+      "AuftragKwp": "",
+      "AuftragModule": "",
+      "AuftragWechselrichter": "",
+      "AuftragWrLeistungKw": "",
+      "AuftragSpeicherVorhanden": "",
+      "AuftragSpeicher": "",
+      "AuftragSpeicherKwh": "",
+      "AuftragWallboxVorhanden": "",
+      "AuftragWallbox": "",
+      "AuftragWallboxKw": ""
     }
   },
 

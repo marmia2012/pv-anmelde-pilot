@@ -69,6 +69,7 @@ if (app.Environment.IsDevelopment())
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 app.MapHubSpotWebhooks();
+app.MapReonicWebhooks();
 app.MapAdminEndpoints();
 
 app.Run();

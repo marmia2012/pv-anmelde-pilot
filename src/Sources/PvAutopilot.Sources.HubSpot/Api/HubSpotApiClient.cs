@@ -14,13 +14,14 @@ namespace PvAutopilot.Sources.HubSpot.Api;
 public sealed class HubSpotApiClient(HttpClient http)
 {
     /// <summary>
-    /// Von HubSpot vordefinierte Verknüpfungstypen (<c>HUBSPOT_DEFINED</c>) Notiz/Aufgabe → Standardobjekt.
+    /// Von HubSpot vordefinierte Verknüpfungstypen (<c>HUBSPOT_DEFINED</c>) Notiz/Aufgabe → Standardobjekt, Artikel → Deal.
     /// Für andere Objekttypen (z. B. Projekte, Custom Objects) wird nach dem Anlegen die Standard-Verknüpfung gesetzt.
     /// </summary>
     private static readonly Dictionary<(string From, string To), int> AssociationTypeIds = new()
     {
         [("notes", "0-1")] = 202, [("notes", "0-2")] = 190, [("notes", "0-3")] = 214, [("notes", "0-5")] = 228,
         [("tasks", "0-1")] = 204, [("tasks", "0-2")] = 192, [("tasks", "0-3")] = 216, [("tasks", "0-5")] = 230,
+        [("line_items", "0-3")] = 20,
     };
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);

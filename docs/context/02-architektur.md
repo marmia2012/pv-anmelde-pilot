@@ -21,6 +21,7 @@
 | MaStR | Playwright im Webportal mit Kundenlogin aus HubSpot (kommt über ein Webformular auf der reinsolar-Website). SOAP-Webdienst scheidet aus (bräuchte Vollmacht für alle Kunden). Passwort wird nach der Registrierung **nicht** gelöscht, es bleibt am Deal: bewusste Abweichung vom Beschluss 26.10. (Termin 3) auf Martins Wunsch, Bestätigung durch Michael am 09.11. offen |
 | Lageplan | TIM-online bzw. WMS Geobasis NRW (ALKIS) – Schnittstelle noch zu prüfen |
 | Datenblätter | Vorerst SharePoint; später ggf. als Anhang am HubSpot-Artikel |
+| Auftragsübernahme Reonic → HubSpot | Nach der Unterschrift in Reonic (Webhook `residentialOffer_signed`, HMAC) überträgt ein eigener Job außerhalb der Anmelde-State-Machine die unterschriebene Variante an den Deal: alle Positionen als Artikel mit Bruttopreis, `Auftrag*`-Properties, Unterschriftsdatum, PDF. Deal nur über `integrations.hubspotDealId`; nie ersetzen oder löschen. Ersetzt die KI-Übertragung (Termin 4, 09.11.). Konzept: `docs/konzept/reonic-hubspot-auftrag.md` |
 | Fehler fachlich | HubSpot-Task |
 | Fehler technisch | 3–5 Retries, dann Mail an Martin (mit Screenshot), Status „blockiert“ am Deal |
 
@@ -33,6 +34,7 @@
 - REST API v3, Read-only-API-Key ist vorhanden (seit 26.10.).
 - Checklisten-Struktur für Duisburg skizziert Martin, Michael überträgt sie in Reonic.
 - Idee: Wechselrichter über die Artikel der Auftragsbestätigung (Reonic → HubSpot) statt als Liste in der Checkliste – noch offen.
+- Seit 10.11.: Die Auftragsdaten gehen nach der Unterschrift per API von Reonic nach HubSpot (Artikel am Deal, nur Anzeige). Die NAB-Datenkarte liest die Komponenten weiter aus Reonic (Hauptvariante).
 
 ## Netze Duisburg
 - PV-Anmeldeportal (SAP UI5), Zugang seit 26.10. vorhanden.

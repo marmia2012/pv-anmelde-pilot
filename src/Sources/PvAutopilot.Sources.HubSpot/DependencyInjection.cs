@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using PvAutopilot.Core.Http;
 using PvAutopilot.Core.Mastr;
 using PvAutopilot.Core.Notifications;
+using PvAutopilot.Core.Orders;
 using PvAutopilot.Core.Sources;
 using PvAutopilot.Sources.HubSpot.Api;
 using PvAutopilot.Sources.HubSpot.Documents;
@@ -35,10 +36,14 @@ public static class DependencyInjection
 
         // Schreiben, nur bei HubSpot:WriteEnabled (sonst Debug-Log). Idempotenz über ICrmWriteLedger (Infrastructure).
         services.AddScoped<HubSpotWriteOnce>();
-        services.AddScoped<IHumanTaskSink, HubSpotTaskSink>();
+        // Konkrete Klassen zusätzlich, weil HubSpotOrderSink Aufgaben und Dateien fest am Deal (0-3) ablegt.
+        services.AddScoped<HubSpotTaskSink>();
+        services.AddScoped<IHumanTaskSink>(sp => sp.GetRequiredService<HubSpotTaskSink>());
         services.AddScoped<IAuditSink, HubSpotAuditSink>();
-        services.AddScoped<IDocumentArchive, HubSpotDocumentArchive>();
+        services.AddScoped<HubSpotDocumentArchive>();
+        services.AddScoped<IDocumentArchive>(sp => sp.GetRequiredService<HubSpotDocumentArchive>());
         services.AddScoped<ICrmStatusSink, HubSpotStatusSink>();
+        services.AddScoped<ICrmOrderSink, HubSpotOrderSink>();
         return services;
     }
 

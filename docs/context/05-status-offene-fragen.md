@@ -17,6 +17,7 @@
 - HubSpot-Adapter auf Deal-Basis (`docs/konzept/hubspot-adapter.md`): Deal lesen inkl. Fallbacks Betreiber/Anlagenort, Errichter aus der Instanz, EVU-Vollmacht aus den Anhängen, Struktur-Endpunkt `GET /admin/hubspot/structure`; Schreiben (Aufgaben am Deal-Inhaber, Audit-Notizen nach Stufe, Dateien + Ablage-Notiz inkl. NAB-Datenkarte, Status-PATCH, MaStR-Login lesen) gebaut, aber hinter `HubSpot__WriteEnabled` (Default `false`); Idempotenz über Tabelle `crm_writes`
 - Reonic-Adapter: Hauptvariante, Katalog, Zählernummer, Checkliste, Backoff 2/4/8/16 s
 - Netzbetreiber-Ermittlung per PLZ-Tabelle
+- Auftragsübernahme Reonic → HubSpot (10.11., `docs/konzept/reonic-hubspot-auftrag.md`): Webhook `POST /webhooks/reonic` (HMAC), Job `OrderTransferJob`, Artikel + `Auftrag*`-Properties + PDF am Deal, Admin-Endpunkt `POST /admin/reonic/projects/{projectId}/order-sync` mit Vorschau; schreibt nur mit `HubSpot__WriteEnabled`
 - Netze-Duisburg-Adapter: Formulare E.1, E.2, E.3 (mit Speicher), E.8 und Zählerantrag (je gewechseltem Zähler, sonst eine Fertigmeldung) werden aus der Datenkarte gefüllt (PDFsharp 6.1.1, Felder editierbar), Antragspaket je Einreichungsart inkl. Anhängen, Prüfung Netzanmeldung + Inbetriebnahme, Pflichtanhänge konfigurierbar (`RequiredAttachments`). Mapping: `docs/konzept/netze-duisburg-adapter.md`. Versandkanal Mail/Portal austauschbar (noch Platzhalter)
 
 ### Noch nicht umgesetzt (Platzhalter im Code)
@@ -36,6 +37,8 @@
 | Portal-Upload der Unterlagen Netze Duisburg | Entscheidung Portal oder Mail |
 | Kundenadresse in den Duisburg-Formularen (Anschlussnehmer, abweichender Betreiber, Anschlussnutzer; heute Anlagenadresse) | Umstellung auf `NabDataCard.Betreiberadresse` (HubSpot-Adapter ist gemergt) |
 | Wallbox > 4,2 kW → Mantelbogen Netze Duisburg | Klärung mit Michael |
+| Auftragsübernahme gegen echte Daten (Webhook in Reonic, `Auftrag*`-Properties, Line-Item-Scopes) | `Reonic__WebhookSecret`, Properties am Deal (Michael), Schreibfreigabe |
+| Netzanmeldung auf die unterschriebene Reonic-Variante statt der Hauptvariante umstellen | eigenes To-do |
 
 ## In Arbeit (Martin, bis 09.11. bzw. 15.11.)
 - [ ] **Netze Duisburg + MaStR bauen, Dry-Run auf Staging (bis 15.11.)**
@@ -59,6 +62,8 @@
 - [ ] Martin als Member im OpenAI-Plattformzugang
 - [ ] Unterschrift als Bild
 - [ ] Annahmen Duisburg-Formulare mit Michael klären (`docs/konzept/netze-duisburg-adapter.md`, Abschnitt „Offen“): MK 3 für „Kaskade“ und Bedeutung „Kaskaden-Umbau“ · „Drehstrom“ bei dreiphasigem WR (E.2) · Zählerantrag: MK-8-Zusatzzähler, Messeinrichtung bei MK 1/MK 3, Ausbau als „Zusammenlegung“, „Erweiterung“ bei Bestandsanlage · Wallbox-Mantelbogen (> 4,2 kW) · Inselbetrieb = ja auch ohne Speicher/Notstrom (E.2) · E.8 „Drosselung 70 %“ vs. E.3 „60 %“ · Anhänge zur Inbetriebnahme
+- [ ] Auftragsübernahme: bisherige KI-Übertragung Reonic → HubSpot abschalten (sonst doppelte Artikel); `Auftrag*`-Properties am Deal anlegen (Datum, Zahl, Text, Checkbox); Webhook in Reonic einrichten; Scopes `crm.objects.line_items.read`/`.write`
+- [ ] Prüfen, ob `integrations.hubspotDealId` nach dem Zusammenführen doppelter Deals auf den richtigen Deal zeigt
 - [ ] Portal-Zugangsdaten in der Teams-Excel
 - [ ] HubSpot-Vertrag/Lizenz
 

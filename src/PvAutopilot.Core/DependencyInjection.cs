@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using PvAutopilot.Core.DataCard;
 using PvAutopilot.Core.Notifications;
+using PvAutopilot.Core.Orders;
 using PvAutopilot.Core.Processes;
 using PvAutopilot.Core.Processes.Steps;
 using PvAutopilot.Core.Submission;
@@ -23,6 +24,9 @@ public static class DependencyInjection
         services.AddScoped<ProcessTriggerHandler>();
         services.AddScoped<ProcessFailureHandler>();
         services.AddScoped<ProcessWatchdog>();
+
+        // Auftragsübernahme Planungssoftware → CRM, eigener Ablauf außerhalb der State-Machine.
+        services.AddScoped<OrderTransferService>();
 
         // Je Zustand genau ein Schritt; ProcessEngine prüft das beim Erzeugen.
         services.AddScoped<IProcessStep, AggregateDataCardStep>();

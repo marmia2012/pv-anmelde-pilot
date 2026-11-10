@@ -49,6 +49,19 @@ public static class HubSpotPropertyKeys
     public const string MastrNummerAnlage = nameof(MastrNummerAnlage);
     public const string MastrNummerSpeicher = nameof(MastrNummerSpeicher);
 
+    // Auftrag aus Reonic nach der Unterschrift (schreiben, HubSpotOrderSink; docs/konzept/reonic-hubspot-auftrag.md)
+    public const string AuftragUnterschriftsdatum = nameof(AuftragUnterschriftsdatum);
+    public const string AuftragKwp = nameof(AuftragKwp);
+    public const string AuftragModule = nameof(AuftragModule);
+    public const string AuftragWechselrichter = nameof(AuftragWechselrichter);
+    public const string AuftragWrLeistungKw = nameof(AuftragWrLeistungKw);
+    public const string AuftragSpeicherVorhanden = nameof(AuftragSpeicherVorhanden);
+    public const string AuftragSpeicher = nameof(AuftragSpeicher);
+    public const string AuftragSpeicherKwh = nameof(AuftragSpeicherKwh);
+    public const string AuftragWallboxVorhanden = nameof(AuftragWallboxVorhanden);
+    public const string AuftragWallbox = nameof(AuftragWallbox);
+    public const string AuftragWallboxKw = nameof(AuftragWallboxKw);
+
     /// <summary>Von HubSpot vorgegebene Property (kein Kundenfeld): Inhaber des Deals, Ziel für Aufgaben.</summary>
     public const string HubSpotOwnerId = "hubspot_owner_id";
 
