@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Text;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -297,6 +298,40 @@ public class ReonicWebhookHttpTests
         Assert.Empty(running.Scheduler.Enqueued);
     }
 
+    [Fact]
+    public async Task Chunked_body_over_256_kb_over_http_is_413_without_enqueue()
+    {
+        await using var running = await StartAsync(Secret);
+        var timestamp = TestData.Now.ToUnixTimeSeconds().ToString();
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/webhooks/reonic")
+        {
+            Content = new StreamContent(new UnsizedStream(new byte[ReonicWebhookEndpoints.MaxBodyBytes + 1])),
+        };
+        request.Headers.TransferEncodingChunked = true;
+        request.Headers.Add(ReonicWebhookValidator.TimestampHeader, timestamp);
+        request.Headers.Add(ReonicWebhookValidator.SignatureHeader, "sha256=" + new string('0', 64));
+
+        using var response = await running.Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
+        Assert.Empty(running.Scheduler.Enqueued);
+    }
+
+    private sealed class UnsizedStream(byte[] data) : Stream
+    {
+        private readonly MemoryStream _inner = new(data);
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => _inner.Read(buffer, offset, count);
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
     private sealed class ListLoggerProvider(List<string> sink) : ILoggerProvider
     {
         public ILogger CreateLogger(string categoryName) => new ListLogger(categoryName, sink);
@@ -313,5 +348,174 @@ public class ReonicWebhookHttpTests
                     sink.Add($"{logLevel}|{category}|{formatter(state, exception)}");
             }
         }
+    }
+}
+
+/// <summary><c>ReceiveAsync</c>: Vorabprüfung der Header ohne Body-Lesen und Größenlimit (256 KB).</summary>
+public class ReonicWebhookReceiveTests
+{
+    private const string Secret = "test-webhook-secret";
+    private const int Limit = 256 * 1024;
+
+    private readonly FixedTime _time = new(TestData.Now);
+    private readonly RecordingOrderScheduler _scheduler = new();
+
+    private string Now => TestData.Now.ToUnixTimeSeconds().ToString();
+
+    private static string BodyOfSize(int bytes)
+    {
+const string prefix = "{\"type\":\"residentialOffer_signed\",\"pad\":\"";        const string tail = "\",\"data\":{\"projectId\":\"proj-1\",\"signatureRequestId\":\"sig-1\"}}";
+        var body = prefix + new string('x', bytes - prefix.Length - tail.Length) + tail;
+        Assert.Equal(bytes, Encoding.UTF8.GetByteCount(body));
+        return body;
+    }
+
+    private async Task<(int? Status, CountingStream Stream)> ReceiveAsync(Stream body, string secret = Secret, bool signature = true,
+        bool timestamp = true, long? contentLength = null, string? signedText = null)
+    {
+        var context = new DefaultHttpContext();
+        var counting = new CountingStream(body);
+        context.Request.Body = counting;
+        context.Request.ContentLength = contentLength;
+        if (timestamp)
+            context.Request.Headers[ReonicWebhookValidator.TimestampHeader] = Now;
+        if (signature)
+            context.Request.Headers[ReonicWebhookValidator.SignatureHeader] = signedText is null
+                ? "sha256=" + new string('0', 64)
+                : ReonicWebhookValidatorTests.Sign(signedText, Now);
+
+        var validator = new ReonicWebhookValidator(Options.Create(new ReonicOptions { WebhookSecret = secret }), _time);
+        var result = await ReonicWebhookEndpoints.ReceiveAsync(context.Request, validator, _scheduler,
+            new CapturingLogger<ReonicWebhookValidator>(), default);
+        return (((IStatusCodeHttpResult)result).StatusCode, counting);
+    }
+
+    private static MemoryStream Bytes(string text) => new(Encoding.UTF8.GetBytes(text));
+
+    [Fact]
+    public async Task Without_secret_it_is_401_and_the_body_is_not_read()
+    {
+        var (status, stream) = await ReceiveAsync(Bytes("{}"), secret: "");
+
+        Assert.Equal(401, status);
+        Assert.Equal(0, stream.Reads);
+    }
+
+    [Fact]
+    public async Task Without_signature_header_it_is_401_and_the_body_is_not_read()
+    {
+        var (status, stream) = await ReceiveAsync(Bytes("{}"), signature: false);
+
+        Assert.Equal(401, status);
+        Assert.Equal(0, stream.Reads);
+    }
+
+    [Fact]
+    public async Task Without_timestamp_header_it_is_401_and_the_body_is_not_read()
+    {
+        var (status, stream) = await ReceiveAsync(Bytes("{}"), timestamp: false);
+
+        Assert.Equal(401, status);
+        Assert.Equal(0, stream.Reads);
+    }
+
+    [Fact]
+    public async Task Without_headers_an_oversized_declared_body_is_still_401_not_413()
+    {
+        var (status, stream) = await ReceiveAsync(Bytes("{}"), signature: false, contentLength: Limit + 1);
+
+        Assert.Equal(401, status);
+        Assert.Equal(0, stream.Reads);
+    }
+
+    [Fact]
+    public async Task Declared_content_length_over_the_limit_is_413_without_reading()
+    {
+        var (status, stream) = await ReceiveAsync(Bytes("{}"), contentLength: Limit + 1);
+
+        Assert.Equal(413, status);
+        Assert.Equal(0, stream.Reads);
+        Assert.Empty(_scheduler.Enqueued);
+    }
+
+    [Fact]
+    public async Task Streamed_body_over_the_limit_without_length_is_413()
+    {
+        var (status, _) = await ReceiveAsync(Bytes(BodyOfSize(Limit + 1)), contentLength: null);
+
+        Assert.Equal(413, status);
+        Assert.Empty(_scheduler.Enqueued);
+    }
+
+    [Fact]
+    public async Task Streamed_body_over_the_limit_is_rejected_even_with_a_valid_signature()
+    {
+        var body = BodyOfSize(Limit + 1);
+
+        var (status, _) = await ReceiveAsync(Bytes(body), signedText: body);
+
+        Assert.Equal(413, status);
+        Assert.Empty(_scheduler.Enqueued);
+    }
+
+    [Fact]
+    public async Task Body_of_exactly_the_limit_with_a_valid_signature_is_accepted_and_enqueued()
+    {
+        var body = BodyOfSize(Limit);
+
+        var (status, _) = await ReceiveAsync(Bytes(body), contentLength: Limit, signedText: body);
+
+        Assert.Equal(200, status);
+        Assert.Equal([("proj-1", (string?)"sig-1")], _scheduler.Enqueued);
+    }
+
+    [Fact]
+    public async Task Body_of_exactly_the_limit_without_declared_length_is_accepted()
+    {
+        var body = BodyOfSize(Limit);
+
+        var (status, _) = await ReceiveAsync(Bytes(body), signedText: body);
+
+        Assert.Equal(200, status);
+        Assert.Single(_scheduler.Enqueued);
+    }
+
+    [Fact]
+    public async Task Small_body_with_a_wrong_signature_is_401_after_reading()
+    {
+        var (status, stream) = await ReceiveAsync(Bytes("{}"));
+
+        Assert.Equal(401, status);
+        Assert.True(stream.Reads > 0);
+    }
+
+    [Fact]
+    public void Limit_is_256_kilobytes() => Assert.Equal(Limit, ReonicWebhookEndpoints.MaxBodyBytes);
+
+    private sealed class CountingStream(Stream inner) : Stream
+    {
+        public int Reads { get; private set; }
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            Reads++;
+            return inner.Read(buffer, offset, count);
+        }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            Reads++;
+            return inner.ReadAsync(buffer, cancellationToken);
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 }

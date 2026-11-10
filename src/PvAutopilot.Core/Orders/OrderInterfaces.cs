@@ -22,6 +22,12 @@ public interface ICrmOrderSink
     /// <param name="order">Auftrag mit <see cref="SignedOrder.CrmProjectId"/> und <see cref="SignedOrder.SignatureRequestId"/>.</param>
     /// <param name="signedPdf">Inhalt von <see cref="SignedOrder.SignedPdf"/>, falls heruntergeladen.</param>
     Task<OrderPublishResult> PublishAsync(SignedOrder order, byte[]? signedPdf, CancellationToken ct);
+
+    /// <summary>
+    /// Legt eine Aufgabe zur Auftragsübernahme am CRM-Objekt an (je Schlüssel höchstens eine; ohne Schreibfreigabe nur Log).
+    /// </summary>
+    /// <returns><c>false</c>, wenn das CRM-Objekt nicht existiert (dann ist keine Aufgabe möglich).</returns>
+    Task<bool> CreateOrderTaskAsync(string dealId, string taskKey, string title, string body, CancellationToken ct);
 }
 
 /// <summary>Plant die Übertragung eines Auftrags als Hintergrund-Job ein (Instanz: Hangfire).</summary>
@@ -49,6 +55,9 @@ public sealed record OrderPublishResult
 
     /// <summary>Artikel am CRM-Objekt, die nicht aus dieser Übertragung stammen.</summary>
     public int ForeignLineItems { get; init; }
+
+    /// <summary>Das CRM hat den PATCH der Auftrags-Properties dauerhaft abgelehnt (4xx außer 429); Artikel und PDF sind trotzdem übertragen.</summary>
+    public bool PropertiesRejected { get; init; }
 
     public bool DealNotFound => SkipReason == OrderSkipReasons.DealNotFound;
 }
@@ -85,7 +94,19 @@ public sealed record OrderTransferResult
     public IReadOnlyList<string> PropertyNames { get; init; } = [];
     public bool PdfStored { get; init; }
     public int ForeignLineItems { get; init; }
+    public bool PropertiesRejected { get; init; }
 
     /// <summary>Fachliche Probleme (Produktnamen erlaubt, keine Werte).</summary>
     public IReadOnlyList<string> Problems { get; init; } = [];
+}
+
+/// <summary>
+/// Eine ausdrücklich gemeldete Signaturanfrage ist in der Quelle nicht (oder nicht als unterschrieben) sichtbar. Technisch:
+/// der Job wiederholt, nach dem letzten Versuch Alarm. Die Meldung enthält nur Projekt- und Signatur-ID.
+/// </summary>
+public sealed class SignatureNotVisibleException(string planningProjectId, string signatureRequestId)
+    : InvalidOperationException($"Reonic-Projekt {planningProjectId}: Signatur {signatureRequestId} nicht gefunden oder nicht unterschrieben.")
+{
+    public string PlanningProjectId { get; } = planningProjectId;
+    public string SignatureRequestId { get; } = signatureRequestId;
 }

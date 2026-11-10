@@ -106,7 +106,10 @@ public sealed class ReonicSignedOrderSource(
 
             var components = await ComponentLoader.LoadAsync(api, lineItems, problems, ct);
             var componentData = ComponentMapper.Map(components);
-            problems.AddRange(componentData.Problems);
+            // Fehlende Datenblätter und Grenzen der Netzanmeldung sind für die Auftragsübernahme ohne Belang.
+            problems.AddRange(componentData.ProblemDetails
+                .Where(p => p.Kind is not (ComponentProblemKind.MissingDatasheet or ComponentProblemKind.NotYetSupportedForNetzanmeldung))
+                .Select(p => p.Text));
             summary = new OrderSummary(componentData.Module, componentData.Wechselrichter, componentData.Speicher, componentData.Wallbox);
         }
 

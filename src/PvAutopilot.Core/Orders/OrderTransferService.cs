@@ -9,13 +9,14 @@ namespace PvAutopilot.Core.Orders;
 /// </summary>
 /// <remarks>
 /// Fachliche Fehler enden ohne Exception: ohne bekanntes CRM-Objekt mit einem einmaligen Alarm an den Betreiber
-/// (Schlüssel <c>alert:order:…</c> im <see cref="ICrmWriteLedger"/>), sonst mit genau einer Aufgabe am Deal.
-/// Technische Fehler (Quelle/CRM nicht erreichbar) werfen weiter; der Job wiederholt.
+/// (Schlüssel <c>alert:order:…</c> im <see cref="ICrmWriteLedger"/>), sonst mit genau einer Aufgabe am Deal
+/// (<see cref="ICrmOrderSink.CreateOrderTaskAsync"/>, immer am Deal). Technische Fehler (Quelle/CRM nicht erreichbar)
+/// werfen weiter; der Job wiederholt. Ebenso technisch: eine ausdrücklich übergebene Signatur (Webhook, Admin), die die
+/// Quelle nicht oder nicht als unterschrieben sieht – das kann ein Zwischenstand in Reonic sein.
 /// </remarks>
 public sealed class OrderTransferService(
     ISignedOrderSource source,
     ICrmOrderSink sink,
-    IHumanTaskSink tasks,
     IOperatorAlert alert,
     ICrmWriteLedger ledger,
     ILogger<OrderTransferService> logger)
@@ -29,9 +30,13 @@ public sealed class OrderTransferService(
     public static string ProblemsTaskKey(string? signatureRequestId) => $"order-problems:{SignatureOrNone(signatureRequestId)}";
     public static string NotSignedTaskKey(string projectId, string? signatureRequestId) => $"order-not-signed:{projectId}:{SignatureOrNone(signatureRequestId)}";
 
-    /// <param name="signatureRequestId">Signaturanfrage aus dem Webhook; <c>null</c> = die jüngste unterschriebene.</param>
+    /// <param name="signatureRequestId">Signaturanfrage aus dem Webhook bzw. Admin-Aufruf; <c>null</c> = die jüngste unterschriebene.</param>
+    /// <exception cref="SignatureNotVisibleException">
+    /// <paramref name="signatureRequestId"/> ist gesetzt, aber in der Quelle nicht vorhanden oder nicht unterschrieben (Retry).
+    /// </exception>
     public async Task<OrderTransferResult> TransferAsync(string planningProjectId, string? signatureRequestId, CancellationToken ct)
     {
+        signatureRequestId = string.IsNullOrWhiteSpace(signatureRequestId) ? null : signatureRequestId.Trim();
         logger.LogInformation("Auftragsübernahme für Reonic-Projekt {ReonicProjectId} gestartet (Signatur {SignatureRequestId})",
             planningProjectId, signatureRequestId);
 
@@ -50,6 +55,15 @@ public sealed class OrderTransferService(
             });
         }
 
+        // Gemeldete Signatur (noch) nicht sichtbar oder nicht unterschrieben: technisch, damit der Job wiederholt und nach
+        // dem letzten Versuch alarmiert. Ohne gegebene ID bleibt es fachlich (Aufgabe unten).
+        if (signatureRequestId is not null && !order.IsSigned)
+        {
+            logger.LogWarning("Auftragsübernahme für Reonic-Projekt {ReonicProjectId}: gemeldete Signatur {SignatureRequestId} nicht gefunden oder nicht unterschrieben",
+                planningProjectId, signatureRequestId);
+            throw new SignatureNotVisibleException(planningProjectId, signatureRequestId);
+        }
+
         var signature = order.SignatureRequestId ?? signatureRequestId;
         var dealId = string.IsNullOrWhiteSpace(order.CrmProjectId) ? null : order.CrmProjectId.Trim();
         var problems = order.Problems.ToList();
@@ -64,6 +78,7 @@ public sealed class OrderTransferService(
             PropertyNames = published?.PropertyNames ?? [],
             PdfStored = published?.PdfStored ?? false,
             ForeignLineItems = published?.ForeignLineItems ?? 0,
+            PropertiesRejected = published?.PropertiesRejected ?? false,
             Problems = problems,
         };
 
@@ -82,8 +97,10 @@ public sealed class OrderTransferService(
         {
             logger.LogWarning("Auftragsübernahme für Reonic-Projekt {ReonicProjectId}: Signatur {SignatureRequestId} fehlt oder ist nicht unterschrieben",
                 planningProjectId, signature);
-            await tasks.CreateTaskAsync(dealId, NotSignedTaskKey(planningProjectId, signature), NotSignedTaskTitle,
+            var created = await sink.CreateOrderTaskAsync(dealId, NotSignedTaskKey(planningProjectId, signature), NotSignedTaskTitle,
                 ProblemText("Der Autopilot hat für dieses Reonic-Projekt keine gültige Unterschrift gefunden und nichts übernommen.", problems), ct);
+            if (!created)
+                return End(await DealNotFoundAsync(planningProjectId, signature, dealId, Result(OrderSkipReasons.DealNotFound), ct));
             return End(Result(OrderSkipReasons.NotSigned));
         }
 
@@ -94,7 +111,8 @@ public sealed class OrderTransferService(
                 problems.Add("Reonic: unterschriebene Variante ohne Positionen");
             logger.LogWarning("Auftragsübernahme für Reonic-Projekt {ReonicProjectId}, Signatur {SignatureRequestId}: keine Positionen, nichts übertragen",
                 planningProjectId, signature);
-            await TaskForProblemsAsync(dealId, signature, problems, ct);
+            if (!await TaskForProblemsAsync(dealId, signature, problems, ct))
+                return End(await DealNotFoundAsync(planningProjectId, signature, dealId, Result(OrderSkipReasons.DealNotFound), ct));
             return End(Result(OrderSkipReasons.VariantMissing));
         }
 
@@ -108,28 +126,33 @@ public sealed class OrderTransferService(
 
         var published = await sink.PublishAsync(order, pdf, ct);
         if (published.DealNotFound)
-        {
-            await AlertOnceAsync(DealNotFoundAlertKey(planningProjectId, signature),
-                $"Auftragsübernahme: HubSpot-Deal {dealId} nicht gefunden",
-                $"Das Reonic-Projekt {planningProjectId} (Signatur {signature}) verweist auf den HubSpot-Deal {dealId}, den es nicht gibt. "
-                + "Verknüpfung in Reonic prüfen und die Übernahme über den Admin-Endpunkt nachholen.",
-                ct);
-            return End(Result(null, published));
-        }
+            return End(await DealNotFoundAsync(planningProjectId, signature, dealId, Result(null, published), ct));
 
         // Bei einer zweiten Unterschrift hat der Sink schon eine eigene Aufgabe angelegt und nichts geschrieben.
-        if (published.SkipReason != OrderSkipReasons.SecondSignature)
-            await TaskForProblemsAsync(dealId, signature, problems, ct);
+        if (published.SkipReason != OrderSkipReasons.SecondSignature && !await TaskForProblemsAsync(dealId, signature, problems, ct))
+            return End(await DealNotFoundAsync(planningProjectId, signature, dealId, Result(null, published), ct));
 
         return End(Result(null, published));
     }
 
-    private async Task TaskForProblemsAsync(string dealId, string signature, IReadOnlyList<string> problems, CancellationToken ct)
+    /// <returns><c>false</c>, wenn der Deal nicht existiert; ohne Probleme immer <c>true</c>.</returns>
+    private async Task<bool> TaskForProblemsAsync(string dealId, string signature, IReadOnlyList<string> problems, CancellationToken ct)
     {
         if (problems.Count == 0)
-            return;
-        await tasks.CreateTaskAsync(dealId, ProblemsTaskKey(signature), ProblemsTaskTitle,
+            return true;
+        return await sink.CreateOrderTaskAsync(dealId, ProblemsTaskKey(signature), ProblemsTaskTitle,
             ProblemText("Die Auftragsdaten aus Reonic sind unvollständig. Bitte prüfen und in HubSpot bzw. Reonic ergänzen.", problems), ct);
+    }
+
+    private async Task<OrderTransferResult> DealNotFoundAsync(
+        string planningProjectId, string? signature, string dealId, OrderTransferResult result, CancellationToken ct)
+    {
+        await AlertOnceAsync(DealNotFoundAlertKey(planningProjectId, signature),
+            $"Auftragsübernahme: HubSpot-Deal {dealId} nicht gefunden",
+            $"Das Reonic-Projekt {planningProjectId} (Signatur {signature ?? "–"}) verweist auf den HubSpot-Deal {dealId}, den es nicht gibt. "
+            + "Verknüpfung in Reonic prüfen und die Übernahme über den Admin-Endpunkt nachholen.",
+            ct);
+        return result with { SkipReason = OrderSkipReasons.DealNotFound };
     }
 
     private static string ProblemText(string intro, IReadOnlyList<string> problems) =>
@@ -153,9 +176,10 @@ public sealed class OrderTransferService(
     {
         logger.LogInformation(
             "Auftragsübernahme für Reonic-Projekt {ReonicProjectId} beendet: Signatur {SignatureRequestId}, Deal {DealId}, geschrieben {Written} "
-            + "({SkipReason}), {LineItemCount} Artikel, {PropertyCount} Properties, PDF {PdfStored}, {ForeignLineItems} fremde Artikel, {ProblemCount} Probleme",
+            + "({SkipReason}), {LineItemCount} Artikel, {PropertyCount} Properties, Properties abgelehnt {PropertiesRejected}, PDF {PdfStored}, "
+            + "{ForeignLineItems} fremde Artikel, {ProblemCount} Probleme",
             result.PlanningProjectId, result.SignatureRequestId, result.CrmProjectId, result.Written, result.SkipReason,
-            result.LineItemCount, result.PropertyNames.Count, result.PdfStored, result.ForeignLineItems, result.Problems.Count);
+            result.LineItemCount, result.PropertyNames.Count, result.PropertiesRejected, result.PdfStored, result.ForeignLineItems, result.Problems.Count);
         return result;
     }
 

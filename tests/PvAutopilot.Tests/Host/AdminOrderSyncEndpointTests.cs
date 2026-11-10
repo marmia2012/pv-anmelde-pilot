@@ -26,7 +26,7 @@ public sealed class AdminOrderSyncEndpointTests : IAsyncLifetime
 
     private readonly FakeOrderSource _source = new();
     private readonly FakeOrderSink _sink = new();
-    private readonly RecordingTasks _tasks = new();
+    private RecordingTasks _tasks => _sink.Tasks;
     private readonly OrderAlertRecorder _alert = new();
     private readonly RecordingProjectLock _lock = new();
     private WebApplication _app = null!;
@@ -39,7 +39,7 @@ public sealed class AdminOrderSyncEndpointTests : IAsyncLifetime
         builder.Logging.ClearProviders();
         builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> { ["Admin:ApiKey"] = AdminKey });
         var h = new ProcessHarness();
-        builder.Services.AddSingleton(new OrderTransferService(_source, _sink, _tasks, _alert, new InMemoryCrmWriteLedger(),
+        builder.Services.AddSingleton(new OrderTransferService(_source, _sink, _alert, new InMemoryCrmWriteLedger(),
             NullLogger<OrderTransferService>.Instance));
         builder.Services.AddSingleton<IProcessRunLock>(_lock);
         var rig = new HubSpotRig();
@@ -122,7 +122,7 @@ public sealed class AdminOrderSyncEndpointTests : IAsyncLifetime
             new[]
             {
                 "crmProjectId", "foreignLineItems", "lineItemCount", "pdfStored", "planningProjectId", "problems",
-                "propertyNames", "signatureRequestId", "skipReason", "written",
+                "propertiesRejected", "propertyNames", "signatureRequestId", "skipReason", "written",
             },
             json.EnumerateObject().Select(p => p.Name).Order(StringComparer.Ordinal));
         Assert.Equal(Project, json.GetProperty("planningProjectId").GetString());
@@ -241,5 +241,64 @@ public sealed class AdminOrderSyncEndpointTests : IAsyncLifetime
                 return ValueTask.CompletedTask;
             }
         }
+    }
+
+    [Theory]
+    [InlineData("%20")]
+    [InlineData("%20%20%20")]
+    public async Task Blank_project_id_is_a_bad_request_without_lock_or_transfer(string project)
+    {
+        _source.Order = Order();
+
+        using var response = await Post(project);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Empty(_source.Reads);
+        Assert.Equal(0, _lock.Acquired);
+        Assert.Empty(_lock.Ids);
+    }
+
+    [Fact]
+    public async Task Project_id_with_surrounding_spaces_is_trimmed_for_transfer_and_lock()
+    {
+        _source.Order = Order();
+
+        using var response = await Post($"%20{Project}%20");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(Project, Assert.Single(_source.Reads).Project);
+        Assert.Equal(OrderTransferJob.LockId(Project), Assert.Single(_lock.Ids));
+        var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal(Project, json.GetProperty("planningProjectId").GetString());
+    }
+
+    [Fact]
+    public async Task Given_signature_that_is_not_visible_gives_conflict_with_ids_only_and_releases_the_lock()
+    {
+        _source.Order = Order() with { IsSigned = false, Problems = ["Reonic: Geheimproblem"] };
+
+        using var response = await Post(Project, "?signatureRequestId=sig-1");
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var text = await response.Content.ReadAsStringAsync();
+        Assert.Contains(Project, text);
+        Assert.Contains("sig-1", text);
+        Assert.DoesNotContain("Geheim", text);
+        Assert.Equal((1, 1), (_lock.Acquired, _lock.Released));
+        Assert.Empty(_sink.Published);
+        Assert.Empty(_alert.Sent);
+        Assert.Empty(_sink.Tasks.Calls);
+    }
+
+    [Fact]
+    public async Task Not_signed_without_signature_id_stays_ok_with_a_business_result()
+    {
+        _source.Order = Order() with { IsSigned = false, SignatureRequestId = null };
+
+        using var response = await Post(Project);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal(OrderSkipReasons.NotSigned, json.GetProperty("skipReason").GetString());
     }
 }

@@ -21,13 +21,59 @@ public static class ReonicWebhookEndpoints
             app.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger(LoggerName)
                 .LogWarning("Reonic-Webhook deaktiviert: Reonic__WebhookSecret ist nicht gesetzt, {WebhookPath} lehnt alles mit 401 ab", Path);
 
-        app.MapPost(Path, async (HttpRequest request, ReonicWebhookValidator validator, IOrderTransferScheduler scheduler,
+        app.MapPost(Path, (HttpRequest request, ReonicWebhookValidator validator, IOrderTransferScheduler scheduler,
                 ILoggerFactory loggers, CancellationToken ct) =>
+            ReceiveAsync(request, validator, scheduler, loggers.CreateLogger(LoggerName), ct));
+    }
+
+    /// <summary>Obergrenze für den Webhook-Body; Reonic-Ereignisse sind wenige hundert Bytes.</summary>
+    public const int MaxBodyBytes = 256 * 1024;
+
+    /// <summary>
+    /// Ohne Secret oder ohne Signatur-/Zeitstempel-Header 401, ohne den Body zu lesen. Body größer als
+    /// <see cref="MaxBodyBytes"/> → 413. Sonst <see cref="Handle"/>.
+    /// </summary>
+    public static async Task<IResult> ReceiveAsync(HttpRequest request, ReonicWebhookValidator validator,
+        IOrderTransferScheduler scheduler, ILogger logger, CancellationToken ct)
+    {
+        var eventId = request.Headers[ReonicWebhookValidator.EventIdHeader].ToString();
+        if (!validator.IsEnabled
+            || string.IsNullOrEmpty(request.Headers[ReonicWebhookValidator.SignatureHeader])
+            || string.IsNullOrEmpty(request.Headers[ReonicWebhookValidator.TimestampHeader]))
         {
-            using var buffer = new MemoryStream();
-            await request.Body.CopyToAsync(buffer, ct);
-            return Handle(buffer.ToArray(), request.Headers, validator, scheduler, loggers.CreateLogger(LoggerName));
-        });
+            logger.LogWarning("Reonic-Webhook {ReonicEventId} abgelehnt: Webhook deaktiviert oder Signatur-/Zeitstempel-Header fehlt", eventId);
+            return Results.Unauthorized();
+        }
+
+        if (request.ContentLength is > MaxBodyBytes)
+        {
+            logger.LogWarning("Reonic-Webhook {ReonicEventId} abgelehnt: Body größer als {MaxBodyBytes} Bytes", eventId, MaxBodyBytes);
+            return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+        }
+
+        var body = await ReadLimitedAsync(request.Body, MaxBodyBytes, ct);
+        if (body is null)
+        {
+            logger.LogWarning("Reonic-Webhook {ReonicEventId} abgelehnt: Body größer als {MaxBodyBytes} Bytes", eventId, MaxBodyBytes);
+            return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+        }
+
+        return Handle(body, request.Headers, validator, scheduler, logger);
+    }
+
+    /// <returns>Inhalt; <c>null</c>, wenn der Stream mehr als <paramref name="maxBytes"/> liefert (ohne Content-Length, chunked).</returns>
+    private static async Task<byte[]?> ReadLimitedAsync(Stream stream, int maxBytes, CancellationToken ct)
+    {
+        using var buffer = new MemoryStream();
+        var chunk = new byte[16 * 1024];
+        int read;
+        while ((read = await stream.ReadAsync(chunk, ct)) > 0)
+        {
+            if (buffer.Length + read > maxBytes)
+                return null;
+            buffer.Write(chunk, 0, read);
+        }
+        return buffer.ToArray();
     }
 
     /// <summary>Verarbeitung ohne HTTP-Pipeline (für Tests): Rohbody und Header rein, Ergebnis raus.</summary>

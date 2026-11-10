@@ -53,9 +53,8 @@ public sealed class OrderTransferJob(
                 planningProjectId, signatureRequestId, retryCount, ex.GetType().Name);
             try
             {
-                // Nur IDs und Exception-Typ: die Message kann Pfade enthalten, der Body nie.
                 await alert.SendAsync($"Auftragsübernahme für Reonic-Projekt {planningProjectId} gescheitert",
-                    $"Reonic-Projekt {planningProjectId}, Signatur {signatureRequestId ?? "–"}: technischer Fehler {ex.GetType().Name} nach allen Retries. "
+                    $"Reonic-Projekt {planningProjectId}, Signatur {signatureRequestId ?? "–"}: technischer Fehler {Describe(ex)} nach allen Retries. "
                     + "Nach der Behebung über POST /admin/reonic/projects/{projectId}/order-sync nachholen.",
                     null, CancellationToken.None);
             }
@@ -66,6 +65,18 @@ public sealed class OrderTransferJob(
             }
         }
     }
+
+    /// <summary>
+    /// Fehlerbeschreibung für den Alarm. <see cref="HttpRequestException"/>: Typ, Statuscode und Message – die Messages der
+    /// Api-Clients und des Downloaders enthalten nur Pfad und Status, nie Body oder signierte URL. Alles andere: nur der Typ.
+    /// </summary>
+    public static string Describe(Exception ex) => ex switch
+    {
+        HttpRequestException http => http.StatusCode is { } status
+            ? $"{nameof(HttpRequestException)} (HTTP {(int)status}: {http.Message})"
+            : $"{nameof(HttpRequestException)} ({http.Message})",
+        _ => ex.GetType().Name,
+    };
 
     /// <summary>Stabile Guid aus <c>order:&lt;projekt&gt;</c> für das Lock (eigener Schlüsselraum neben den Vorgangs-IDs).</summary>
     public static Guid LockId(string planningProjectId) =>

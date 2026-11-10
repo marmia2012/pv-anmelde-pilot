@@ -37,6 +37,18 @@ internal sealed class FakeOrderSink : ICrmOrderSink
         Published.Add((order, signedPdf));
         return Throw is null ? Task.FromResult(Result) : throw Throw;
     }
+
+    /// <summary>Aufgaben am Deal (vorher im IHumanTaskSink); <see cref="DealExists"/> = false simuliert einen fehlenden Deal.</summary>
+    public RecordingTasks Tasks { get; } = new();
+    public bool DealExists { get; set; } = true;
+
+    public async Task<bool> CreateOrderTaskAsync(string dealId, string taskKey, string title, string body, CancellationToken ct)
+    {
+        if (!DealExists)
+            return false;
+        await Tasks.CreateTaskAsync(dealId, taskKey, title, body, ct);
+        return true;
+    }
 }
 
 internal sealed class OrderAlertRecorder : IOperatorAlert
@@ -61,12 +73,12 @@ public class OrderTransferServiceTests
 
     private readonly FakeOrderSource _source = new();
     private readonly FakeOrderSink _sink = new();
-    private readonly RecordingTasks _tasks = new();
+    private RecordingTasks _tasks => _sink.Tasks;
     private readonly OrderAlertRecorder _alert = new();
     private readonly InMemoryCrmWriteLedger _ledger = new();
     private readonly CapturingLogger<OrderTransferService> _log = new();
 
-    private OrderTransferService Service() => new(_source, _sink, _tasks, _alert, _ledger, _log);
+    private OrderTransferService Service() => new(_source, _sink, _alert, _ledger, _log);
 
     private static readonly DocumentRef Pdf = new(DocumentKind.Auftrag, "reonic-signature", "https://files.example/x.pdf", "Auftrag unterschrieben.pdf");
 
@@ -156,7 +168,8 @@ public class OrderTransferServiceTests
     {
         _source.Order = Order(signed: false, positions: 0, variant: null, problems: ["Reonic: Signaturanfrage hat Status „expired“"], pdf: Pdf);
 
-        var result = await Service().TransferAsync(Project, Sig, default);
+        // Ohne übergebene Signatur-ID fachlich (Befund 4: mit übergebener ID technisch, siehe Service).
+        var result = await Service().TransferAsync(Project, null, default);
 
         var task = Assert.Single(_tasks.Calls);
         Assert.Equal(Deal, task.CrmProjectId);
@@ -419,5 +432,111 @@ public class OrderTransferServiceTests
         Assert.DoesNotContain("Marke", _log.All);
         Assert.Contains(Project, _log.All);
         Assert.Contains(Sig, _log.All);
+    }
+
+    // Deal fehlt in HubSpot beim Anlegen einer Aufgabe
+
+    [Fact]
+    public async Task Not_signed_without_signature_id_and_missing_deal_alerts_deal_not_found_exactly_once()
+    {
+        _sink.DealExists = false;
+        _source.Order = Order(signature: null, signed: false, positions: 0, variant: null, problems: ["Reonic: keine unterschriebene Signaturanfrage am Projekt"]);
+
+        var first = await Service().TransferAsync(Project, null, default);
+        await Service().TransferAsync(Project, null, default);
+
+        var alert = Assert.Single(_alert.Sent);
+        Assert.Contains(Deal, alert.Subject);
+        Assert.Equal(OrderSkipReasons.DealNotFound, first.SkipReason);
+        Assert.Contains($"alert:order:{Project}:none:deal-not-found", _ledger.Records.Keys);
+        Assert.Empty(_sink.Tasks.Calls);
+        Assert.Empty(_sink.Published);
+    }
+
+    [Fact]
+    public async Task Missing_variant_and_missing_deal_alerts_deal_not_found_exactly_once()
+    {
+        _sink.DealExists = false;
+        _source.Order = Order(variant: null, positions: 0, problems: ["Reonic: unterschriebene Variante nicht gefunden"]);
+
+        var first = await Service().TransferAsync(Project, Sig, default);
+        await Service().TransferAsync(Project, Sig, default);
+
+        Assert.Single(_alert.Sent);
+        Assert.Equal(OrderSkipReasons.DealNotFound, first.SkipReason);
+        Assert.Contains($"alert:order:{Project}:{Sig}:deal-not-found", _ledger.Records.Keys);
+        Assert.Empty(_sink.Tasks.Calls);
+        Assert.Empty(_sink.Published);
+    }
+
+    [Fact]
+    public async Task Problems_task_for_a_missing_deal_alerts_deal_not_found_exactly_once_after_publish()
+    {
+        _sink.DealExists = false;
+        _source.Order = Order(problems: ["Reonic: Problem"]);
+
+        var first = await Service().TransferAsync(Project, Sig, default);
+        await Service().TransferAsync(Project, Sig, default);
+
+        Assert.Single(_alert.Sent);
+        Assert.Equal(OrderSkipReasons.DealNotFound, first.SkipReason);
+        Assert.Contains($"alert:order:{Project}:{Sig}:deal-not-found", _ledger.Records.Keys);
+        Assert.Empty(_sink.Tasks.Calls);
+        Assert.Equal(2, _sink.Published.Count);
+    }
+
+    [Fact]
+    public async Task Existing_deal_gives_no_deal_not_found_alert_in_the_task_paths()
+    {
+        _source.Order = Order(problems: ["Reonic: Problem"]);
+
+        await Service().TransferAsync(Project, Sig, default);
+
+        Assert.Empty(_alert.Sent);
+        Assert.Single(_sink.Tasks.Calls);
+    }
+
+    // Gemeldete Signatur nicht sichtbar
+
+    [Fact]
+    public async Task Given_signature_that_is_not_signed_throws_without_alert_task_or_publish()
+    {
+        _source.Order = Order(signed: false, positions: 0, variant: null, problems: ["Reonic: Signaturanfrage hat Status „awaitingSignature“"]);
+
+        var ex = await Assert.ThrowsAsync<SignatureNotVisibleException>(() => Service().TransferAsync(Project, Sig, default));
+
+        Assert.Equal((Project, Sig), (ex.PlanningProjectId, ex.SignatureRequestId));
+        Assert.Contains(Project, ex.Message);
+        Assert.Contains(Sig, ex.Message);
+        Assert.Empty(_alert.Sent);
+        Assert.Empty(_sink.Tasks.Calls);
+        Assert.Empty(_sink.Published);
+        Assert.Empty(_ledger.Records);
+    }
+
+    [Fact]
+    public async Task Given_signature_is_trimmed_before_the_check()
+    {
+        _source.Order = Order(signed: false);
+
+        var ex = await Assert.ThrowsAsync<SignatureNotVisibleException>(() => Service().TransferAsync(Project, "  sig-1 ", default));
+
+        Assert.Equal(Sig, ex.SignatureRequestId);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("  ")]
+    public async Task Without_signature_id_a_not_signed_order_stays_a_business_case_with_a_task(string? given)
+    {
+        _source.Order = Order(signature: null, signed: false, positions: 0, variant: null, problems: ["Reonic: keine unterschriebene Signaturanfrage am Projekt"]);
+
+        var result = await Service().TransferAsync(Project, given, default);
+
+        Assert.Equal(OrderSkipReasons.NotSigned, result.SkipReason);
+        Assert.Equal($"order-not-signed:{Project}:none", Assert.Single(_sink.Tasks.Calls).Key);
+        Assert.Empty(_alert.Sent);
+        Assert.Empty(_sink.Published);
     }
 }

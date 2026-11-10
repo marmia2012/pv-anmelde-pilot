@@ -18,8 +18,10 @@ namespace PvAutopilot.Sources.HubSpot;
 /// <remarks>
 /// Schreibt nur mit <see cref="HubSpotOptions.WriteEnabled"/>; sonst Vorschau (gelesen werden Deal und Artikel-Verknüpfungen).
 /// Idempotenz: Artikel über <see cref="HubSpotWriteOnce"/> (<see cref="LineItemKey"/>), PDF über den Ablage-Schlüssel
-/// <c>order-pdf:&lt;signatur&gt;</c>, Abschluss im Ledger unter <see cref="OrderKey"/> = Signatur-ID. Eine andere Signatur
-/// am selben Deal schreibt nichts und legt nur eine Aufgabe an. Nichts wird gelöscht oder ersetzt.
+/// <c>order-pdf:&lt;signatur&gt;</c>. Vor dem ersten Write beansprucht die Signatur den Deal im Ledger (<see cref="OrderKey"/> =
+/// Signatur-ID, Anspruch statt Abschluss): eine andere Signatur bzw. ein anderes Projekt am selben Deal schreibt danach nichts,
+/// auch wenn die erste Übertragung abgebrochen ist, und legt nur eine Aufgabe an. Nichts wird gelöscht oder ersetzt.
+/// Ein dauerhaft abgelehnter PATCH der Auftrags-Properties (4xx außer 429) alarmiert einmal und blockiert den Rest nicht.
 /// Logs enthalten nur Deal-ID, Signatur-ID, Anzahlen und Property-Namen – nie Namen, Preise, Texte, Dateinamen.
 /// </remarks>
 public sealed class HubSpotOrderSink(
@@ -28,6 +30,7 @@ public sealed class HubSpotOrderSink(
     ICrmWriteLedger ledger,
     HubSpotTaskSink tasks,
     HubSpotDocumentArchive archive,
+    IOperatorAlert alert,
     IOptions<HubSpotOptions> options,
     ILogger<HubSpotOrderSink> logger) : ICrmOrderSink
 {
@@ -45,6 +48,20 @@ public sealed class HubSpotOrderSink(
     public static string PdfArchiveKey(string signatureRequestId) => $"order-pdf:{signatureRequestId}";
     public static string SecondSignatureTaskKey(string signatureRequestId) => $"order-second-signature:{signatureRequestId}";
     public static string ForeignItemsTaskKey(string signatureRequestId) => $"order-foreign-items:{signatureRequestId}";
+    public static string PatchAlertKey(string signatureRequestId) => $"alert:order-patch:{signatureRequestId}";
+
+    /// <summary>Aufgabe zur Auftragsübernahme, immer am Deal <c>0-3</c>; vorher wird geprüft (lesend), ob der Deal existiert.</summary>
+    public async Task<bool> CreateOrderTaskAsync(string dealId, string taskKey, string title, string body, CancellationToken ct)
+    {
+        if (await api.GetObjectAsync(DealObjectTypeId, dealId, [], ct) is null)
+        {
+            logger.LogWarning("Aufgabe {WriteKey} nicht angelegt: HubSpot-Deal {DealId} nicht gefunden", taskKey, dealId);
+            return false;
+        }
+        // Ohne WriteEnabled nur Debug-Log (HubSpotTaskSink).
+        await tasks.CreateTaskAsync(DealObjectTypeId, dealId, taskKey, title, body, ct);
+        return true;
+    }
 
     public async Task<OrderPublishResult> PublishAsync(SignedOrder order, byte[]? signedPdf, CancellationToken ct)
     {
@@ -67,8 +84,13 @@ public sealed class HubSpotOrderSink(
         var properties = OrderPropertyMapper.Map(order, o);
         var propertyNames = properties.Keys.Order(StringComparer.Ordinal).ToList();
 
-        // Zweite, andere Unterschrift zum selben Deal: nichts schreiben, nur Aufgabe.
-        if (await ledger.FindAsync(OrderKey(dealId), ct) is { } previous && previous.ExternalId != signature)
+        // Deal beanspruchen, bevor irgendetwas geschrieben wird. Ohne WriteEnabled nur nachsehen.
+        var claim = await ledger.FindAsync(OrderKey(dealId), ct);
+        if (claim is null && o.WriteEnabled && !await ledger.RecordAsync(OrderKey(dealId), signature, CancellationToken.None))
+            claim = await ledger.FindAsync(OrderKey(dealId), ct);
+
+        // Zweite, andere Unterschrift (oder anderes Projekt) zum selben Deal: nichts schreiben, nur Aufgabe.
+        if (claim is { } previous && previous.ExternalId != signature)
         {
             logger.LogWarning("Auftragsübernahme für Deal {DealId}: Signatur {SignatureRequestId} abweichend von der übertragenen {PreviousSignatureRequestId}, nichts geschrieben",
                 dealId, signature, previous.ExternalId);
@@ -114,10 +136,19 @@ public sealed class HubSpotOrderSink(
         }
         logger.LogInformation("Auftragsübernahme Deal {DealId}: {LineItemCount} Artikel angelegt bzw. vorhanden", dealId, order.Positions.Count);
 
+        var propertiesRejected = false;
         if (properties.Count > 0)
         {
-            await api.UpdateObjectAsync(DealObjectTypeId, dealId, properties, ct);
-            logger.LogInformation("HubSpot-{WriteType} für Deal {DealId} geschrieben: {PropertyNames}", PropertiesWriteType, dealId, propertyNames);
+            try
+            {
+                await api.UpdateObjectAsync(DealObjectTypeId, dealId, properties, ct);
+                logger.LogInformation("HubSpot-{WriteType} für Deal {DealId} geschrieben: {PropertyNames}", PropertiesWriteType, dealId, propertyNames);
+            }
+            catch (HttpRequestException ex) when (HubSpotStatusSink.IsPermanent(ex.StatusCode))
+            {
+                propertiesRejected = true;
+                await PatchRejectedAsync(dealId, signature, (int)ex.StatusCode!.Value, propertyNames, ct);
+            }
         }
         else
             logger.LogDebug("HubSpot-{WriteType} für Deal {DealId} übersprungen: keine Auftrag-Property konfiguriert", PropertiesWriteType, dealId);
@@ -129,15 +160,35 @@ public sealed class HubSpotOrderSink(
             logger.LogInformation("Auftragsübernahme Deal {DealId}: unterschriebenes PDF abgelegt (Signatur {SignatureRequestId})", dealId, signature);
         }
 
-        if (!await ledger.RecordAsync(OrderKey(dealId), signature, CancellationToken.None))
-            logger.LogDebug("Auftragsübernahme Deal {DealId}: {WriteKey} schon festgehalten", dealId, OrderKey(dealId));
-
         logger.LogInformation("Auftragsübernahme nach HubSpot-Deal {DealId} abgeschlossen: Signatur {SignatureRequestId}", dealId, signature);
         return new OrderPublishResult
         {
             Written = true, LineItemCount = order.Positions.Count, PropertyNames = propertyNames,
-            PdfStored = signedPdf is not null, ForeignLineItems = foreign,
+            PdfStored = signedPdf is not null, ForeignLineItems = foreign, PropertiesRejected = propertiesRejected,
         };
+    }
+
+    /// <summary>
+    /// 4xx außer 429 (z. B. Property-Name falsch, Wert passt nicht zum Property-Typ): Wiederholen hilft nicht. Error-Log und einmal
+    /// je Signatur ein Alarm (<see cref="PatchAlertKey"/>), danach geht die Übertragung weiter.
+    /// </summary>
+    private async Task PatchRejectedAsync(string dealId, string signature, int statusCode, IReadOnlyList<string> propertyNames, CancellationToken ct)
+    {
+        logger.LogError("HubSpot-{WriteType} für Deal {DealId} (Signatur {SignatureRequestId}) dauerhaft abgelehnt: HTTP {StatusCode}",
+            PropertiesWriteType, dealId, signature, statusCode);
+
+        var key = PatchAlertKey(signature);
+        if (await ledger.FindAsync(key, ct) is not null)
+        {
+            logger.LogDebug("Alarm {WriteKey} schon gesendet", key);
+            return;
+        }
+        // Nur IDs, Statuscode und Property-Namen, keine Werte.
+        await alert.SendAsync($"HubSpot: Auftrags-Properties für Deal {dealId} abgelehnt",
+            $"PATCH der Auftrags-Properties am Deal {dealId} (Signatur {signature}): HTTP {statusCode}. Artikel und PDF wurden übertragen. "
+            + $"Bitte HubSpot:Properties (Auftrag*) und die Property-Typen (Datum, Zahl, Text, Checkbox) prüfen: {string.Join(", ", propertyNames)}.",
+            null, ct);
+        await ledger.RecordAsync(key, "alert", CancellationToken.None);
     }
 
     /// <summary>Verknüpfte Artikel des Deals minus die eigenen dieser Signatur (laut Ledger).</summary>

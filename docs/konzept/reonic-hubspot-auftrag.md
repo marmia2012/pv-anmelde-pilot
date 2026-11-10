@@ -18,12 +18,12 @@ Unterschreibt ein Kunde ein Angebot in Reonic, überträgt der Autopilot die unt
 
 ## Ablauf
 
-1. **Webhook** `POST /webhooks/reonic`: Rohbody lesen → Signatur prüfen → `residentialOffer_signed` → Job einreihen → sofort 200. Alternativ der Admin-Endpunkt (synchron).
+1. **Webhook** `POST /webhooks/reonic`: Secret und Signatur-/Zeitstempel-Header vorhanden? → Rohbody lesen (höchstens 256 KB) → Signatur prüfen → `residentialOffer_signed` → Job einreihen → sofort 200. Alternativ der Admin-Endpunkt (synchron).
 2. **Reonic lesen** (`ReonicSignedOrderSource`, nur GET):
    `GET /residentialProjects/{id}` (`integrations.hubspotDealId`) → `GET …/signatureRequests` (die gegebene, sonst die jüngste mit `status = signed`) → `GET …/variants/{signedVariantId}` → alle Positionen (alle Systeme + `optionalBundles` mit `selected`, Reihenfolge der Variante) → Katalog der relevanten Komponenten (`ComponentLoader`, wie bei der Netzanmeldung) → `ComponentMapper` für die Zusammenfassung.
-3. **Prüfen** (`OrderTransferService`): Projekt fehlt → Alarm. Keine Deal-ID → Alarm. Signatur fehlt/nicht `signed` → Aufgabe. Keine Variante/Positionen → Aufgabe, nichts übertragen.
+3. **Prüfen** (`OrderTransferService`): Projekt fehlt → Alarm. **Gemeldete** Signatur-ID (Webhook, Admin mit Parameter) nicht sichtbar oder nicht `signed` → technischer Fehler (`SignatureNotVisibleException`, Retry, danach Alarm; Admin: 409). Keine Deal-ID → Alarm. Ohne gemeldete ID keine unterschriebene Signatur → Aufgabe. Keine Variante/Positionen → Aufgabe, nichts übertragen. Aufgaben legt `ICrmOrderSink.CreateOrderTaskAsync` immer am Deal `0-3` an und prüft vorher, ob der Deal existiert; fehlt er → Alarm `deal-not-found`.
 4. **PDF laden** über `signedPdfUrl` (eigener HttpClient ohne API-Key, nur https, ≤ 20 MB). Nicht abrufbar → Problem.
-5. **HubSpot schreiben** (`HubSpotOrderSink`, immer am Deal `0-3`): Deal lesen → zweite Unterschrift? → fremde Artikel zählen → Artikel anlegen → Properties `PATCH` → PDF + Notiz → Ledger `order:<dealId>`.
+5. **HubSpot schreiben** (`HubSpotOrderSink`, immer am Deal `0-3`): Deal lesen → Deal beanspruchen (Ledger `order:<dealId>` = Signatur-ID, nur mit `WriteEnabled`) → andere Signatur hat den Anspruch? → nur Aufgabe → fremde Artikel zählen → Artikel anlegen → Properties `PATCH` (4xx außer 429: einmal Alarm, weiter) → PDF + Notiz.
 6. **Probleme** → genau eine Aufgabe am Deal (`order-problems:<signatur>`), Text listet die Probleme (Produktnamen, keine Werte).
 
 Die NAB-Datenkarte liest Komponenten weiter aus der Reonic-**Hauptvariante** (`primaryOfferVariantId`); die Artikel in HubSpot sind Anzeige. Die Umstellung der Netzanmeldung auf die unterschriebene Variante ist ein eigenes To-do.
@@ -56,7 +56,7 @@ Einkaufspreise (`unitPurchasePrice`, `totalPurchasePrice`) stehen nicht im DTO u
 | `AuftragSpeicher`, `AuftragSpeicherKwh` | „Hersteller Modell (10.24 kWh)“, Nennkapazität | Text, Zahl |
 | `AuftragWallbox`, `AuftragWallboxKw` | „1 × Hersteller Modell (11 kW)“, Ladeleistung je Stück | Text, Zahl |
 
-Zusammenfassung nach den Regeln des Reonic-Adapters (gleiche Komponenten addiert, All-in-one zählt als WR + Speicher, nur der erste Speicher-/Wallbox-Typ).
+Zusammenfassung nach den Regeln des Reonic-Adapters (gleiche Komponenten addiert, All-in-one zählt als WR + Speicher, nur der erste Speicher-/Wallbox-Typ). Von den Katalogproblemen übernimmt der Auftrag nur fehlende Katalogwerte und Mengeneinheiten; „ohne Datenblatt“ und „mehrere Speicher/Wallboxen“ betreffen nur die Netzanmeldung (`ComponentProblemKind`).
 
 **PDF:** `IDocumentArchive` (Datei privat in `/pv-autopilot/<dealId>` + Notiz am Deal), Dateiname „Auftrag unterschrieben &lt;yyyy-MM-dd&gt;.pdf“ ohne Kundennamen, Ablage-Schlüssel `order-pdf:<signatur>`.
 
@@ -66,7 +66,8 @@ Zusammenfassung nach den Regeln des Reonic-Adapters (gleiche Komponenten addiert
 |---|---|
 | Artikel | `lineitem:<dealId>:<signatur>:<index>` (über `HubSpotWriteOnce`) |
 | PDF | `file:<dealId>:order-pdf:<signatur>`, Notiz `file-note:<dealId>:<hash>` |
-| Übertragung abgeschlossen | `order:<dealId>` → ExternalId = Signatur-ID |
+| Anspruch auf den Deal | `order:<dealId>` → ExternalId = Signatur-ID, gesetzt **vor** dem ersten Write |
+| Alarm Properties abgelehnt | `alert:order-patch:<signatur>` |
 | Aufgabe Probleme | `task:order-problems:<signatur>` |
 | Aufgabe zweite Unterschrift | `task:order-second-signature:<signatur>` |
 | Aufgabe fremde Artikel | `task:order-foreign-items:<signatur>` |
@@ -76,7 +77,7 @@ Zusammenfassung nach den Regeln des Reonic-Adapters (gleiche Komponenten addiert
 | Alarm Deal existiert nicht | `alert:order:<projekt>:<signatur>:deal-not-found` |
 
 - Ein Angebot wird nur einmal unterschrieben und **nie ersetzt oder gelöscht**. Gleiche Signatur-ID erneut (Reonic-Wiederholung, Retry, Admin) → Ledger-Treffer, nichts doppelt; der Properties-`PATCH` ist idempotent.
-- **Zweite, andere Unterschrift** am selben Deal (`order:<dealId>` ≠ Signatur): nichts schreiben, nur Aufgabe.
+- **Anspruch statt Abschluss:** `order:<dealId>` wird vor dem ersten Write per `INSERT … ON CONFLICT DO NOTHING` gesetzt; bei Konflikt wird der Eintrag neu gelesen. Gleiche Signatur → weiter (Retry, Wiederaufnahme). **Andere Signatur** bzw. anderes Reonic-Projekt am selben Deal → nichts schreiben, nur Aufgabe – auch wenn die erste Übertragung abgebrochen ist. Ohne `WriteEnabled` wird nichts beansprucht, nur verglichen.
 - **Fremde Artikel** = verknüpfte Line Items minus die eigenen dieser Signatur (Ledger). Mehr als 0 → eine Aufgabe; die eigenen werden trotzdem angelegt, fremde bleiben unverändert.
 - Nebenläufigkeit: je Reonic-Projekt ein Lauf (`IProcessRunLock` mit `OrderTransferJob.LockId` = Guid aus `order:<projekt>`); belegt → Job in 1 min neu, Admin-Endpunkt 409.
 - Verbleibende Lücken wie im [HubSpot-Adapter](hubspot-adapter.md#idempotenz): Absturz zwischen Anlegen und Ledger, 5xx nach dem Anlegen → Dublette möglich.
@@ -88,10 +89,12 @@ Zusammenfassung nach den Regeln des Reonic-Adapters (gleiche Komponenten addiert
 | Reonic-Projekt nicht gefunden (404) | einmaliger Alarm, Ende |
 | `integrations.hubspotDealId` leer | einmaliger Alarm (ohne Deal keine Aufgabe), Ende |
 | HubSpot-Deal existiert nicht (404) | einmaliger Alarm, kein Retry |
-| Signatur nicht gefunden / Status ≠ `signed` | Aufgabe am Deal, nichts übertragen |
+| gemeldete Signatur-ID nicht gefunden / Status ≠ `signed` | technisch: Retry, letzter Versuch → Alarm (Reonic-Zwischenstand möglich); Admin-Endpunkt 409 |
+| ohne gemeldete ID keine unterschriebene Signatur | Aufgabe am Deal, nichts übertragen |
+| `PATCH` der `Auftrag*`-Properties mit 4xx außer 429 (Name falsch, Typ passt nicht) | Error-Log, einmal Alarm (`alert:order-patch:<signatur>`), Artikel und PDF trotzdem; Ergebnis `propertiesRejected = true` |
 | keine `signedVariantId`, Variante 404, keine Positionen | Aufgabe, nichts übertragen |
 | Position ohne Bruttopreis, kein bzw. nicht abrufbares PDF, Katalogprobleme | Übertragung läuft, eine Aufgabe mit allen Problemen |
-| technisch (5xx nach Backoff, Netzwerk, 401/403, Schreibfehler) | Exception → Hangfire-Retry (30 s/2/10/30 min); letzter Versuch → Alarm-Mail (Projekt-ID, Signatur-ID, Exception-Typ), Job endet ohne Fehler |
+| technisch (5xx nach Backoff, Netzwerk, 401/403, Schreibfehler) | Exception → Hangfire-Retry (30 s/2/10/30 min); letzter Versuch → Alarm-Mail (Projekt-ID, Signatur-ID, Exception-Typ; bei `HttpRequestException` zusätzlich Statuscode und Message, die nur Pfad und Status enthält), Job endet ohne Fehler |
 | Webhook `residentialOffer_signatureWithdrawn` | ignoriert (Info-Log) |
 
 Ohne `HubSpot__WriteEnabled=true` schreibt nichts nach HubSpot (auch keine Aufgaben); Ergebnis `Written=false`, `SkipReason=WriteEnabled=false` mit Vorschau (Anzahl Artikel, Property-Namen, PDF ja/nein, fremde Artikel). Gelesen werden Deal und Artikel-Verknüpfungen. Alarme gehen unabhängig davon (Betreiber, nicht HubSpot).
@@ -102,7 +105,9 @@ Ohne `HubSpot__WriteEnabled=true` schreibt nichts nach HubSpot (auch keine Aufga
 
 | Fall | Antwort |
 |---|---|
-| Secret leer, Header fehlt, Signatur falsch, Zeitstempel zu alt | 401 |
+| Secret leer oder Signatur-/Zeitstempel-Header fehlt | 401, Body wird nicht gelesen |
+| Body größer als 256 KB (`MaxBodyBytes`) | 413 |
+| Signatur falsch, Zeitstempel zu alt | 401 |
 | ungültiges JSON | 400 |
 | `residentialOffer_signed` ohne `projectId`/`signatureRequestId` | 400 |
 | `residentialOffer_signed` | Job eingereiht, 200 |
@@ -112,7 +117,7 @@ Ohne Secret startet der Host trotzdem; das Start-Log warnt einmal „Reonic-Webh
 
 ## Admin-Endpunkt
 
-`POST /admin/reonic/projects/{projectId}/order-sync?signatureRequestId=` (Header `X-Admin-Key`): führt die Übernahme synchron aus und antwortet mit `OrderTransferResult` (Projekt-, Signatur-, Deal-ID, `written`, `skipReason`, `lineItemCount`, `propertyNames`, `pdfStored`, `foreignLineItems`, `problems`). Ohne `signatureRequestId` die jüngste unterschriebene. Technischer Fehler → 502 mit Pfad und Status. Mit `WriteEnabled=false` reine Vorschau, lesend gegen echtes Reonic möglich.
+`POST /admin/reonic/projects/{projectId}/order-sync?signatureRequestId=` (Header `X-Admin-Key`): führt die Übernahme synchron aus und antwortet mit `OrderTransferResult` (Projekt-, Signatur-, Deal-ID, `written`, `skipReason`, `lineItemCount`, `propertyNames`, `pdfStored`, `foreignLineItems`, `propertiesRejected`, `problems`). `projectId` und `signatureRequestId` werden getrimmt; leere `projectId` → 400, leere `signatureRequestId` = keine (die jüngste unterschriebene). Gemeldete Signatur nicht sichtbar → 409. Technischer Fehler → 502 mit Pfad und Status. Mit `WriteEnabled=false` reine Vorschau, lesend gegen echtes Reonic möglich.
 
 ## Logging
 

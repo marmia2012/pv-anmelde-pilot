@@ -16,14 +16,14 @@ public class OrderTransferJobTests
 
     private readonly FakeOrderSource _source = new();
     private readonly FakeOrderSink _sink = new();
-    private readonly RecordingTasks _tasks = new();
+    private RecordingTasks _tasks => _sink.Tasks;
     private readonly OrderAlertRecorder _alert = new();
     private readonly RecordingLock _lock = new();
     private readonly RecordingJobs _jobs = new();
 
     private OrderTransferJob Job()
     {
-        var service = new OrderTransferService(_source, _sink, _tasks, _alert, new InMemoryCrmWriteLedger(), NullLogger<OrderTransferService>.Instance);
+        var service = new OrderTransferService(_source, _sink, _alert, new InMemoryCrmWriteLedger(), NullLogger<OrderTransferService>.Instance);
         return new OrderTransferJob(service, _lock, _jobs, _alert, NullLogger<OrderTransferJob>.Instance);
     }
 
@@ -92,9 +92,10 @@ public class OrderTransferJobTests
     }
 
     [Fact]
-    public async Task Failure_on_the_last_retry_alerts_without_throwing_and_without_the_exception_message()
+    public async Task Failure_on_the_last_retry_alerts_without_throwing_with_status_and_path_only_message()
     {
-        _source.ThrowOnRead = new HttpRequestException("HTTP 503 unter /residentialProjects/geheime-id");
+        // Befund 6: Bei HttpRequestException gehen Statuscode und Message (nur Pfad und Status) mit in den Alarm.
+        _source.ThrowOnRead = new HttpRequestException("Reonic residentialProjects/reonic-proj-1: HTTP 503", null, System.Net.HttpStatusCode.ServiceUnavailable);
 
         await Job().RunCoreAsync(Project, Sig, OrderTransferJob.MaxRetries, default);
 
@@ -102,8 +103,8 @@ public class OrderTransferJobTests
         Assert.Contains(Project, alert.Subject);
         Assert.Contains(Sig, alert.Body);
         Assert.Contains(nameof(HttpRequestException), alert.Body);
-        Assert.DoesNotContain("geheime-id", alert.Body);
-        Assert.DoesNotContain("503", alert.Body);
+        Assert.Contains("HTTP 503", alert.Body);
+        Assert.Contains("residentialProjects/reonic-proj-1", alert.Body);
         Assert.Equal((1, 1), (_lock.Acquired, _lock.Released));
     }
 
@@ -230,4 +231,81 @@ public class OrderTransferJobTests
         public bool ChangeState(string jobId, IState state, string expectedState) => false;
     }
 
+
+    // Describe
+
+    [Fact]
+    public void Describe_http_error_with_status_has_http_code_and_message()
+    {
+        var text = OrderTransferJob.Describe(new HttpRequestException("Reonic residentialProjects/x: HTTP 503", null, System.Net.HttpStatusCode.ServiceUnavailable));
+
+        Assert.Contains("HTTP 503", text);
+        Assert.Contains("Reonic residentialProjects/x: HTTP 503", text);
+        Assert.StartsWith(nameof(HttpRequestException), text);
+    }
+
+    [Fact]
+    public void Describe_http_error_without_status_has_the_message_but_no_http_code()
+    {
+        var text = OrderTransferJob.Describe(new HttpRequestException("Name nicht aufgelöst"));
+
+        Assert.Contains("Name nicht aufgelöst", text);
+        Assert.DoesNotContain("HTTP", text);
+        Assert.StartsWith(nameof(HttpRequestException), text);
+    }
+
+    [Fact]
+    public void Describe_any_other_exception_is_only_its_type_name()
+    {
+        Assert.Equal(nameof(InvalidOperationException), OrderTransferJob.Describe(new InvalidOperationException("Pfad /geheim/erika und Daten")));
+        Assert.Equal(nameof(SignatureNotVisibleException), OrderTransferJob.Describe(new SignatureNotVisibleException("p", "s")));
+    }
+
+    [Fact]
+    public async Task Alert_for_a_non_http_failure_contains_only_the_type_name()
+    {
+        _source.ThrowOnRead = new InvalidOperationException("Pfad /geheim/erika");
+
+        await Job().RunCoreAsync(Project, Sig, OrderTransferJob.MaxRetries, default);
+
+        var alert = Assert.Single(_alert.Sent);
+        Assert.Contains(nameof(InvalidOperationException), alert.Body);
+        Assert.DoesNotContain("geheim", alert.Body);
+    }
+
+    // Gemeldete Signatur nicht sichtbar
+
+    private void UnsignedOrder() => _source.Order = new SignedOrder
+    {
+        PlanningProjectId = Project, SignatureRequestId = Sig, IsSigned = false, CrmProjectId = "4711",
+        Problems = ["Reonic: Signaturanfrage hat Status „awaitingSignature“"],
+    };
+
+    [Fact]
+    public async Task Signature_not_visible_is_retried_before_the_last_attempt()
+    {
+        UnsignedOrder();
+
+        await Assert.ThrowsAsync<SignatureNotVisibleException>(() => Job().RunCoreAsync(Project, Sig, OrderTransferJob.MaxRetries - 1, default));
+
+        Assert.Empty(_alert.Sent);
+        Assert.Empty(_tasks.Calls);
+        Assert.Empty(_sink.Published);
+        Assert.Equal(1, _lock.Released);
+    }
+
+    [Fact]
+    public async Task Signature_not_visible_on_the_last_retry_alerts_and_does_not_throw()
+    {
+        UnsignedOrder();
+
+        await Job().RunCoreAsync(Project, Sig, OrderTransferJob.MaxRetries, default);
+
+        var alert = Assert.Single(_alert.Sent);
+        Assert.Contains(Project, alert.Subject);
+        Assert.Contains(Sig, alert.Body);
+        Assert.Contains(nameof(SignatureNotVisibleException), alert.Body);
+        Assert.Empty(_tasks.Calls);
+        Assert.Empty(_sink.Published);
+    }
 }

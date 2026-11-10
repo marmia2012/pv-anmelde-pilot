@@ -3,6 +3,7 @@ using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
 using PvAutopilot.Core.DataCard;
+using PvAutopilot.Core.Notifications;
 using PvAutopilot.Core.Orders;
 using PvAutopilot.Sources.HubSpot;
 using K = PvAutopilot.Sources.HubSpot.HubSpotPropertyKeys;
@@ -19,16 +20,26 @@ public class HubSpotOrderSinkTests
     private readonly InMemoryCrmWriteLedger _ledger = new();
     private readonly FixedTime _time = new(TestData.Now);
     private readonly CapturingLogger<HubSpotOrderSink> _log = new();
+    private readonly PvAutopilot.Tests.Core.OrderAlertRecorder _alert = new();
     private readonly List<string> _associated = [];
     private int _counter;
     private bool _failPatch;
     private bool _failUpload;
+    private HttpStatusCode? _patchStatus;
+    private ICrmWriteLedger? _sinkLedger;
+    private string? _claimAtFirstLineItem;
+    private bool _claimCaptured;
 
     public HubSpotOrderSinkTests()
     {
         _rig.Options.WriteEnabled = true;
         _rig.Handler.Map(HttpMethod.Post, "crm/v3/objects/line_items", _ =>
         {
+            if (!_claimCaptured)
+            {
+                _claimCaptured = true;
+                _claimAtFirstLineItem = _ledger.Records.GetValueOrDefault($"order:{Deal}")?.ExternalId;
+            }
             var id = (++_counter).ToString();
             _associated.Add(id);
             return HubSpotHandler.Json(new { id });
@@ -40,17 +51,19 @@ public class HubSpotOrderSinkTests
         _rig.Handler.Map(HttpMethod.Post, "files/v3/files", _ =>
             _failUpload ? HubSpotHandler.Status(HttpStatusCode.InternalServerError) : HubSpotHandler.Json(new { id = $"F{++_counter}" }));
         _rig.Handler.Map(HttpMethod.Patch, $"crm/v3/objects/0-3/{Deal}", _ =>
-            _failPatch ? HubSpotHandler.Status(HttpStatusCode.InternalServerError) : HubSpotHandler.Json(new { id = Deal }));
+            _patchStatus is { } status ? HubSpotHandler.Status(status)
+            : _failPatch ? HubSpotHandler.Status(HttpStatusCode.InternalServerError) : HubSpotHandler.Json(new { id = Deal }));
     }
 
     private HubSpotOrderSink Sink()
     {
         var options = HubSpotRig.Wrap(_rig.Options);
-        var once = new HubSpotWriteOnce(_ledger, NullLogger<HubSpotWriteOnce>.Instance);
-        return new HubSpotOrderSink(_rig.Api, once, _ledger,
+        var ledger = _sinkLedger ?? _ledger;
+        var once = new HubSpotWriteOnce(ledger, NullLogger<HubSpotWriteOnce>.Instance);
+        return new HubSpotOrderSink(_rig.Api, once, ledger,
             new HubSpotTaskSink(_rig.Api, once, options, _time, NullLogger<HubSpotTaskSink>.Instance),
             new HubSpotDocumentArchive(_rig.Api, once, options, _time, NullLogger<HubSpotDocumentArchive>.Instance),
-            options, _log);
+            _alert, options, _log);
     }
 
     private static readonly byte[] Pdf = [0x25, 0x50, 0x44, 0x46];
@@ -423,25 +436,26 @@ public class HubSpotOrderSinkTests
     // Reihenfolge und Wiederaufnahme
 
     [Fact]
-    public async Task Ledger_entry_for_the_order_is_only_set_at_the_end_so_a_failing_patch_leaves_it_unset()
+    public async Task Deal_is_claimed_before_the_writes_so_a_failing_patch_keeps_the_claim()
     {
         _failPatch = true;
 
         await Assert.ThrowsAsync<HttpRequestException>(() => Sink().PublishAsync(Order(), Pdf, default));
 
-        Assert.DoesNotContain($"order:{Deal}", _ledger.Records.Keys);
+        // Befund 1: order:<deal> ist ein Anspruch vor dem ersten Write, kein Abschluss.
+        Assert.Equal(Sig, _ledger.Records[$"order:{Deal}"].ExternalId);
         Assert.Equal(3, _ledger.Records.Keys.Count(k => k.StartsWith("lineitem:", StringComparison.Ordinal)));
         Assert.Empty(Posts("files/v3/files"));
     }
 
     [Fact]
-    public async Task Ledger_entry_for_the_order_is_unset_when_the_pdf_upload_fails()
+    public async Task Claim_for_the_order_stays_when_the_pdf_upload_fails()
     {
         _failUpload = true;
 
         await Assert.ThrowsAsync<HttpRequestException>(() => Sink().PublishAsync(Order(), Pdf, default));
 
-        Assert.DoesNotContain($"order:{Deal}", _ledger.Records.Keys);
+        Assert.Equal(Sig, _ledger.Records[$"order:{Deal}"].ExternalId);
     }
 
     [Fact]
@@ -507,5 +521,229 @@ public class HubSpotOrderSinkTests
             Assert.DoesNotContain(secret, _log.All);
         Assert.Contains(Deal, _log.All);
         Assert.Contains(Sig, _log.All);
+    }
+
+    // Anspruch auf den Deal
+
+    [Fact]
+    public async Task Deal_is_claimed_with_the_signature_before_the_first_line_item_is_posted()
+    {
+        await Sink().PublishAsync(Order(), null, default);
+
+        Assert.True(_claimCaptured);
+        Assert.Equal(Sig, _claimAtFirstLineItem);
+    }
+
+    [Fact]
+    public async Task Later_signature_after_an_aborted_transfer_writes_nothing_and_creates_exactly_one_task()
+    {
+        _failPatch = true;
+        await Assert.ThrowsAsync<HttpRequestException>(() => Sink().PublishAsync(Order(), Pdf, default));
+        _failPatch = false;
+        var writesBefore = _rig.Handler.Writes.Count();
+
+        var first = await Sink().PublishAsync(Order("sig-b"), Pdf, default);
+        await Sink().PublishAsync(Order("sig-b"), Pdf, default);
+
+        var task = Assert.Single(_rig.Handler.Writes.Skip(writesBefore));
+        Assert.Equal("crm/v3/objects/tasks", task.Path);
+        Assert.Equal(HubSpotOrderSink.SecondSignatureTaskTitle, Props(task)["hs_task_subject"]);
+        Assert.Equal(OrderSkipReasons.SecondSignature, first.SkipReason);
+        Assert.False(first.Written);
+        Assert.Equal(Sig, _ledger.Records[$"order:{Deal}"].ExternalId);
+        Assert.Equal(3, Posts("crm/v3/objects/line_items").Count());
+    }
+
+    [Fact]
+    public async Task Other_project_with_another_signature_at_the_same_deal_is_rejected()
+    {
+        await Sink().PublishAsync(Order(), null, default);
+        var writesBefore = _rig.Handler.Writes.Count();
+
+        var result = await Sink().PublishAsync(Order("sig-x") with { PlanningProjectId = "reonic-other" }, Pdf, default);
+
+        Assert.Equal(OrderSkipReasons.SecondSignature, result.SkipReason);
+        Assert.Equal("crm/v3/objects/tasks", Assert.Single(_rig.Handler.Writes.Skip(writesBefore)).Path);
+        Assert.Equal(3, Posts("crm/v3/objects/line_items").Count());
+    }
+
+    [Fact]
+    public async Task Lost_claim_race_with_the_same_signature_carries_on()
+    {
+        _sinkLedger = new RacingLedger(_ledger, Sig);
+
+        var result = await Sink().PublishAsync(Order(), Pdf, default);
+
+        Assert.True(result.Written);
+        Assert.Equal(3, Posts("crm/v3/objects/line_items").Count());
+        Assert.Single(Patches);
+        Assert.Single(Posts("files/v3/files"));
+        Assert.Empty(Posts("crm/v3/objects/tasks"));
+    }
+
+    [Fact]
+    public async Task Lost_claim_race_against_a_foreign_signature_writes_nothing_but_one_task()
+    {
+        _sinkLedger = new RacingLedger(_ledger, "sig-foreign");
+
+        var result = await Sink().PublishAsync(Order(), Pdf, default);
+        await Sink().PublishAsync(Order(), Pdf, default);
+
+        Assert.Equal(OrderSkipReasons.SecondSignature, result.SkipReason);
+        Assert.False(result.Written);
+        var task = Assert.Single(_rig.Handler.Writes);
+        Assert.Equal("crm/v3/objects/tasks", task.Path);
+        Assert.Empty(Posts("crm/v3/objects/line_items"));
+        Assert.Equal("sig-foreign", _ledger.Records[$"order:{Deal}"].ExternalId);
+    }
+
+    [Fact]
+    public async Task Preview_claims_nothing_so_a_later_real_run_with_another_signature_is_not_blocked()
+    {
+        _rig.Options.WriteEnabled = false;
+        await Sink().PublishAsync(Order("sig-preview"), Pdf, default);
+        Assert.DoesNotContain($"order:{Deal}", _ledger.Records.Keys);
+
+        _rig.Options.WriteEnabled = true;
+        var result = await Sink().PublishAsync(Order(), Pdf, default);
+
+        Assert.True(result.Written);
+        Assert.Equal(Sig, _ledger.Records[$"order:{Deal}"].ExternalId);
+    }
+
+    [Fact]
+    public async Task Preview_for_a_deal_claimed_by_another_signature_reports_second_signature_and_sends_no_write()
+    {
+        _ledger.Records[$"order:{Deal}"] = new CrmWriteRecord { Key = $"order:{Deal}", ExternalId = "sig-other", CreatedAt = TestData.Now };
+        _rig.Options.WriteEnabled = false;
+
+        var result = await Sink().PublishAsync(Order(), Pdf, default);
+
+        Assert.Equal(OrderSkipReasons.SecondSignature, result.SkipReason);
+        Assert.Empty(_rig.Handler.Writes);
+    }
+
+    // PATCH der Properties abgelehnt
+
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.NotFound)]
+    public async Task Permanently_rejected_patch_alerts_once_and_the_rest_is_still_transferred(HttpStatusCode status)
+    {
+        _patchStatus = status;
+
+        var first = await Sink().PublishAsync(Order(), Pdf, default);
+        var second = await Sink().PublishAsync(Order(), Pdf, default);
+
+        Assert.True(first.Written);
+        Assert.True(first.PropertiesRejected);
+        Assert.True(second.Written);
+        Assert.True(second.PropertiesRejected);
+        var alert = Assert.Single(_alert.Sent);
+        Assert.Contains(Deal, alert.Subject);
+        Assert.Contains(((int)status).ToString(), alert.Body);
+        Assert.Contains("auftrag_kwp", alert.Body);
+        Assert.DoesNotContain("Modul 450", alert.Body);
+        Assert.DoesNotContain("2026-11-10", alert.Body);
+        Assert.True(_ledger.Records.ContainsKey($"alert:order-patch:{Sig}"));
+        Assert.Single(Posts("files/v3/files"));
+        Assert.Equal(3, Posts("crm/v3/objects/line_items").Count());
+        Assert.True(first.PdfStored);
+    }
+
+    [Fact]
+    public async Task Rejected_patch_logs_an_error_without_property_values()
+    {
+        _patchStatus = HttpStatusCode.BadRequest;
+
+        await Sink().PublishAsync(Order(), Pdf, default);
+
+        var error = Assert.Single(_log.Messages, m => m.StartsWith("Error:", StringComparison.Ordinal));
+        Assert.Contains("400", error);
+        Assert.Contains(Deal, error);
+        foreach (var value in new[] { "2026-11-10", "Modul 450", "10.24", "Hersteller" })
+        {
+            Assert.DoesNotContain(value, _log.All);
+            Assert.DoesNotContain(value, _alert.Sent.Single().Body);
+        }
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.BadGateway)]
+    public async Task Transient_patch_errors_still_throw_without_alert(HttpStatusCode status)
+    {
+        _patchStatus = status;
+
+        var ex = await Assert.ThrowsAsync<HttpRequestException>(() => Sink().PublishAsync(Order(), Pdf, default));
+
+        Assert.Equal(status, ex.StatusCode);
+        Assert.Empty(_alert.Sent);
+        Assert.Empty(Posts("files/v3/files"));
+    }
+
+    // CreateOrderTaskAsync
+
+    [Fact]
+    public async Task Order_task_for_a_missing_deal_returns_false_and_posts_nothing()
+    {
+        _rig.Handler.Routes.Remove($"GET crm/v3/objects/0-3/{Deal}");
+
+        var created = await Sink().CreateOrderTaskAsync(Deal, "order-problems:sig-1", "Titel", "Text", default);
+
+        Assert.False(created);
+        Assert.Empty(_rig.Handler.Writes);
+        Assert.Empty(_ledger.Records);
+    }
+
+    [Fact]
+    public async Task Order_task_is_created_at_the_deal_even_when_the_configured_object_type_differs()
+    {
+        _rig.Options.ObjectTypeId = "2-99";
+
+        var created = await Sink().CreateOrderTaskAsync(Deal, "order-problems:sig-1", "Titel", "Text", default);
+        await Sink().CreateOrderTaskAsync(Deal, "order-problems:sig-1", "Titel", "Text", default);
+
+        Assert.True(created);
+        var post = Assert.Single(_rig.Handler.Writes);
+        Assert.Equal("crm/v3/objects/tasks", post.Path);
+        Assert.Equal("Titel", Props(post)["hs_task_subject"]);
+        var association = Body(post).GetProperty("associations")[0];
+        Assert.Equal(Deal, association.GetProperty("to").GetProperty("id").GetString());
+        Assert.Equal(216, association.GetProperty("types")[0].GetProperty("associationTypeId").GetInt32());
+        Assert.DoesNotContain(_rig.Handler.Requests, r => r.Path.Contains("2-99"));
+        Assert.True(_ledger.Records.ContainsKey("task:order-problems:sig-1"));
+    }
+
+    [Fact]
+    public async Task Order_task_without_write_enabled_only_reads_the_deal()
+    {
+        _rig.Options.WriteEnabled = false;
+
+        var created = await Sink().CreateOrderTaskAsync(Deal, "order-problems:sig-1", "Titel", "Text", default);
+
+        Assert.True(created);
+        var request = Assert.Single(_rig.Handler.Requests);
+        Assert.Equal(HttpMethod.Get, request.Method);
+        Assert.Equal($"crm/v3/objects/0-3/{Deal}", request.Path);
+        Assert.Empty(_ledger.Records);
+    }
+
+    /// <summary>Verhält sich, als hätte ein paralleler Lauf den Anspruch zuvor gesetzt: RecordAsync des Auftragsschlüssels liefert false.</summary>
+    private sealed class RacingLedger(InMemoryCrmWriteLedger inner, string winner) : ICrmWriteLedger
+    {
+        public Task<CrmWriteRecord?> FindAsync(string key, CancellationToken ct) => inner.FindAsync(key, ct);
+
+        public async Task<bool> RecordAsync(string key, string externalId, CancellationToken ct)
+        {
+            if (key.StartsWith("order:", StringComparison.Ordinal))
+            {
+                await inner.RecordAsync(key, winner, ct);
+                return false;
+            }
+            return await inner.RecordAsync(key, externalId, ct);
+        }
     }
 }
